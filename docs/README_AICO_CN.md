@@ -34,7 +34,7 @@
 | 项目经理<br>(Project Manager, PM) | - setPhases()<br>- reflect() 定期复盘项目进展<br>- retrieve() 检索历史经验<br>- writeTasks(), assignTask()<br>- 负责项目进度、协调资源、风险管理 | P0：初始化项目阶段设置<br>P1：加强计划与资源调度<br>P2：多项目/多团队管理 | st_role.py |
 | 需求分析师<br>(Business Analyst, BA) | - parseRequirements()<br>- reflect() 反思需求<br>- 负责需求调研与业务分析，输出需求说明文档 | P0：基础需求调研<br>P1：持续与用户/业务方沟通<br>P2：复杂业务建模、竞争分析 | st_role.py |
 | 产品经理<br>(Product Manager, PDM) | - writePRD(), revisePRD()<br>- analyzeUserFeedback()<br>- 输出或修订产品需求文档（PRD），定义验收标准<br>- run_reflect() 反思和优化 | P0：编写初版 PRD<br>P1：多轮迭代<br>P2：用户反馈驱动产品优化 | st_role.py |
-| 架构师<br>(Enterprise Architect, EA) | - reviewPRD(), writeDesign(), reviseDesign()<br>- reviewCode() 参与关键代码评审<br>- 输出架构设计文档 (4A：应用/数据/技术/安全) | P0：基础架构设计<br>P1：评审流程完善<br>P2：性能、安全、可扩展等高级需求 | st_role.py |
+| 架构师<br>(Enterprise Architect, EA) | - reviewPRD(), writeDesign(), reviseDesign()<br>- reviewCode() 参与关键代码评审<br>- 输出架构设计文档 (4A：应用/数据/技术/安全)<br>- **conduct4AAssessment() 进行4A架构评估** | P0：基础架构设计<br>P1：评审流程完善<br>P2：性能、安全、可扩展等高级需求 | st_role.py |
 | 开发工程师<br>(Developer, DEV) | - writeCode(), run_code(), reviewCode(), reviseCode()<br>- debug_reflection() 代码调试与优化<br>- 输出可运行代码，修复缺陷 | P0：编写核心功能<br>P1：参与 Review、自动化单测<br>P2：性能优化、持续重构 | run_code.py<br>mock.py |
 | 测试工程师<br>(Tester, QA) | - writeTestCase(), runTestCase()<br>- 增加自动化回归测试场景<br>- 根据需求和设计文档编写/执行测试用例 | P0：功能测试<br>P1：自动化测试/回归测试<br>P2：性能、安全、兼容测试 | reflect.py |
 | DevOps工程师<br>(DevOps Engineer, DO) | - 根据架构调整，初始化或更新开发环境、测试环境等<br>- env_api_registry 环境 API 注册<br>- prepareDeployment(), deploy()<br>- observe() 系统监控与日志分析<br>- 搭建 CI/CD 流水线<br>- 部署监控告警 | P0：初始化基础开发与测试环境<br>P1：实现 CI/CD 与环境自动化更新<br>P2：监控告警、容器化、可观测性 | environment/README.md |
@@ -76,17 +76,17 @@ sequenceDiagram
         BA->>BA: parseRequirements()
         BA->>PDM: 提供需求文档
 
-        note over PDM,EA: 产品 & 初步设计(SOP:PRD编写)
-        PDM->>PDM: writePRD()
-        PDM->>EA: 提交PRD(评审)
+        note over EA,BA: 4A架构需求调研与PRD评审
+        PDM->>EA: 提交PRD进行评审
         EA->>EA: reviewPRD()
-        EA->>EA: writeDesign()
-        note right of EA: 形成基础设计文档(4A)
-
-        note over EA,DO: 环境初始化(SOP:环境配置)
+        EA->>EA: conduct4AAssessment()
+        EA->>EA: writeDesign() / reviseDesign()
         EA->>DO: 提供4A架构需求
         DO->>DO: 初始化或更新开发、测试环境（如引入MQ, Redis等）
         DO-->>EA: 确认环境配置完成
+
+        note over PDM,EA: 产品 & 初步设计(SOP:PRD编写)
+        note right of EA: 形成基础设计文档(4A)
 
         note over PM: 任务分配(SOP:项目管理)
         PM->>PM: writeTasks()
@@ -144,7 +144,8 @@ sequenceDiagram
         BA->>PDM: 更新需求文档
 
         note over EA: 高级设计(SOP:安全/性能)
-        EA->>EA: 进行安全/性能/可扩展考量
+        EA->>EA: conduct4AAssessment()
+        EA->>EA: reviseDesign() (基于4A评估)
         EA->>DO: 更新架构需求
         DO->>DO: 更新开发与测试环境（如加强安全配置）
         DO-->>EA: 确认环境更新完成
@@ -157,7 +158,7 @@ sequenceDiagram
         QA->>DEV: 问题回馈 & 修复跟进
         DEV->>DEV: 修复优化
 
-        note over DO: 运维 & 监控(SOP:可观测性)
+        note over DO: 运维与监控(SOP:可观测性)
         DO->>DO: 部署监控告警
         DO->>DO: 日志分析 & SLA 管理
 
@@ -174,6 +175,11 @@ sequenceDiagram
         note over PM: 计划下一阶段迭代(SOP:迭代计划)
         PM->>PM: 计划下一阶段工作
     end
+
+    note over SYS,EA: 【4A 架构需求调研】
+    SYS->>EA: 提供业务和技术需求
+    EA->>EA: conduct4AAssessment()
+    EA->>SYS: 反馈架构设计建议
 ```
 
 
@@ -272,18 +278,25 @@ sequenceDiagram
 ### 主要职责
 - 设计系统架构，确保软件的可扩展性、性能和安全性。
 - 参与关键代码评审，保证代码质量。
+- **进行客户的 4A 架构需求调研**
 
 ### 标准作业流程
-1. **PRD评审**
-   - 审查产品需求文档 (`reviewPRD()`) ，确保需求的技术可行性。
-   
-2. **架构设计**
-   - 基于PRD，编写系统架构设计文档 (`writeDesign()`)。
-   - 确定系统的4A架构（应用、数据、技术、安全）。
 
-3. **设计审查**
+1. **需求调研与PRD评审**
+   - **提交与评审 PRD**：
+     - 产品经理 (PDM) 提交 PRD 进行评审。
+     - 架构师 (EA) 审查 PRD (`reviewPRD()`)，确保需求的技术可行性。
+   - **4A架构需求调研**：
+     - **应用层（Application）**：与客户沟通，了解业务流程和功能需求，确保架构能够支持业务扩展。
+     - **数据层（Data）**：收集和分析客户的数据管理需求，包括数据存储、处理和分析的要求。
+     - **技术层（Technology）**：评估客户现有的技术栈和未来的技术发展方向，确保架构设计的技术可行性和前瞻性。
+     - **安全层（Security）**：了解客户的安全规范和合规要求，确保架构设计能够满足安全性和隐私保护的需求。
+   - **设计文档编写**：
+     - 根据 PRD 和 4A 评估结果，编写系统架构设计文档 (`writeDesign()`) 或修订现有设计文档 (`reviseDesign()`）。
+   
+2. **设计审查**
    - 将架构设计文档提交给相关角色审查，收集反馈意见。
-   - 修订设计文档，确保架构满足项目需求。
+   - 修订设计文档，确保架构满足项目需求和客户的 4A 需求。
 
 ## 5. 开发工程师 (Developer, DEV)
 
