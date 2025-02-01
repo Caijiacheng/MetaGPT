@@ -9,67 +9,47 @@
   开发工程师调用 PrepareEnv、DesignTechSolution、WriteCode、CodeReview、DebugCode、WriteUnitTest 动作，确保所有产出符合新版代码规范。
 """
 from typing import Dict, List
-from metagpt.roles.role import Role
+from .base_role import AICOBaseRole
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.dev_action import (
     PrepareEnv, DesignTechSolution, BreakdownTask,
     WriteCode, CodeReview, DebugCode, WriteUnitTest
 )
 
-class AICODeveloper(Role):
-    """开发工程师角色，负责技术方案设计和代码实现"""
+class AICODeveloper(AICOBaseRole):
+    """开发工程师角色"""
     
     name: str = "David"
     profile: str = "Developer"
     goal: str = "设计并实现高质量、符合规范的代码"
     constraints: str = "严格遵循代码规范、设计原则和开发流程"
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.set_actions([PrepareEnv, DesignTechSolution])
-        self._watch([BreakdownTask, WriteCode, CodeReview, DebugCode, WriteUnitTest])
+    def get_actions(self) -> list:
+        return [
+            ("prepare_env", PrepareEnv),
+            ("design_solution", DesignTechSolution),
+            ("breakdown_task", BreakdownTask),
+            ("write_code", WriteCode),
+            ("code_review", CodeReview),
+            ("debug_code", DebugCode),
+            ("write_test", WriteUnitTest)
+        ]
         
     async def _act(self) -> None:
-        msg = self.rc.news[-1]
+        action_map = {
+            AICOEnvironment.MSG_TASKS: "design_solution",
+            AICOEnvironment.MSG_TECH_DESIGN: "breakdown_task",
+            AICOEnvironment.MSG_CODE_REVIEW: "code_review",
+            AICOEnvironment.MSG_BUG_REPORT: "debug_code",
+            AICOEnvironment.MSG_TEST_CASES: "write_test"
+        }
         
-        if isinstance(msg.cause_by, PrepareEnv):
-            env_config = await self.rc.todo.run(project_type=self.rc.memory.get("project_type"))
-            await self.publish(AICOEnvironment.MSG_DEV_ENV, env_config)
-            
-        elif isinstance(msg.cause_by, DesignTechSolution):
-            tasks = await self.observe(AICOEnvironment.MSG_TASKS)
-            if not tasks:
-                return
-            tech_design = await self.rc.todo.run(tasks[-1])
-            await self.publish(AICOEnvironment.MSG_TECH_DESIGN, tech_design)
-            
-        elif isinstance(msg.cause_by, WriteCode):
-            tasks = await self.observe(AICOEnvironment.MSG_TASKS)
-            if not tasks:
-                return
-            code = await self.rc.todo.run(tasks[-1])
-            await self.publish(AICOEnvironment.MSG_CODE, code)
-            
-        elif isinstance(msg.cause_by, CodeReview):
-            code = await self.observe(AICOEnvironment.MSG_CODE)
-            if not code:
-                return
-            review = await self.rc.todo.run(code[-1])
-            await self.publish(AICOEnvironment.MSG_CODE_REVIEW, review)
-            
-        elif isinstance(msg.cause_by, DebugCode):
-            bug_report = await self.observe(AICOEnvironment.MSG_BUG_REPORT)
-            if not bug_report:
-                return
-            debug_result = await self.rc.todo.run(bug_report[-1])
-            await self.publish(AICOEnvironment.MSG_DEBUG_RESULT, debug_result)
-            
-        elif isinstance(msg.cause_by, WriteUnitTest):
-            code = await self.observe(AICOEnvironment.MSG_CODE)
-            if not code:
-                return
-            test_result = await self.rc.todo.run(code[-1])
-            await self.publish(AICOEnvironment.MSG_UNIT_TEST_RESULT, test_result)
+        for msg in self.rc.news:
+            action_name = action_map.get(msg.cause_by)
+            if action_name:
+                action = self.get_action(action_name)
+                result = await action.run(msg.content)
+                await self.publish(msg.cause_by, result)
 
 """
 @Modified By: Jiacheng Cai, 2023/12/15

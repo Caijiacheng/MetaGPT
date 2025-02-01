@@ -26,6 +26,7 @@
 """
 from typing import Dict, List
 from metagpt.actions import Action
+from ..actions.base_action import AICOBaseAction
 
 CODE_PROMPT = """
 你是一位资深开发工程师，请根据以下任务要求编写代码，输出JSON格式，要求包含：
@@ -62,23 +63,33 @@ DEBUG_PROMPT = """
 {bug_report}
 """
 
-class WriteCode(Action):
+class WriteCode(AICOBaseAction):
     """编写代码"""
-    async def run(self, task: Dict) -> Dict:
-        prompt = CODE_PROMPT.format(task=task)
-        code = await self.llm.aask(prompt)
-        return code
+    
+    async def validate_input(self, input_data: Dict) -> bool:
+        required = ["task_desc", "tech_stack", "code_standard"]
+        return all(k in input_data for k in required)
+        
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        prompt = CODE_PROMPT.format(task=input_data)
+        return await self.llm.aask(prompt)
 
-class CodeReview(Action):
+class CodeReview(AICOBaseAction):
     """代码评审"""
-    async def run(self, code: Dict) -> Dict:
-        prompt = CODE_REVIEW_PROMPT.format(code=code)
-        review = await self.llm.aask(prompt)
-        return review
+    
+    async def validate_input(self, input_data: Dict) -> bool:
+        return "code_content" in input_data
+        
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        prompt = CODE_REVIEW_PROMPT.format(code=input_data["code_content"])
+        return await self.llm.aask(prompt)
 
-class DebugCode(Action):
+class DebugCode(AICOBaseAction):
     """代码调试"""
-    async def run(self, bug_report: Dict) -> Dict:
-        prompt = DEBUG_PROMPT.format(bug_report=bug_report)
-        debug_result = await self.llm.aask(prompt)
-        return debug_result 
+    
+    async def validate_input(self, input_data: Dict) -> bool:
+        return "bug_desc" in input_data and "original_code" in input_data
+        
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        prompt = DEBUG_PROMPT.format(bug_report=input_data)
+        return await self.llm.aask(prompt) 

@@ -13,53 +13,38 @@ from metagpt.roles.role import Role, RoleReactMode
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from metagpt.actions import UserRequirement, PrepareDocuments
 from ..actions.pdm_action import WritePRD, RevisePRD, AnalyzeRequirement, DesignProduct
+from .base_role import AICOBaseRole
 
-class AICOProductManager(Role):
-    """产品经理角色，负责需求分析和产品设计"""
+class AICOProductManager(AICOBaseRole):
+    """产品经理角色"""
     
     name: str = "Alice"
     profile: str = "Product Manager"
-    goal: str = "分析用户需求，设计优秀产品并确保成功落地"
-    constraints: str = "严格遵循产品设计规范和文档标准"
+    goal: str = "分析用户需求，设计优秀产品"
+    constraints: str = "严格遵循产品设计规范"
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.set_actions([PrepareDocuments, AnalyzeRequirement])
-        self._watch([UserRequirement, WritePRD, RevisePRD, DesignProduct])
-        self.rc.react_mode = RoleReactMode.BY_ORDER
+    def get_actions(self) -> list:
+        return [
+            ("analyze_requirement", AnalyzeRequirement),
+            ("write_prd", WritePRD),
+            ("revise_prd", RevisePRD),
+            ("design_product", DesignProduct)
+        ]
         
     async def _act(self) -> None:
-        msg = self.rc.news[-1]
-        if isinstance(msg.cause_by, PrepareDocuments):
-            docs = await self.rc.todo.run(
-                project_name=self.rc.memory.get("project_name"),
-                doc_type="product"
-            )
-            await self.publish(AICOEnvironment.MSG_PRODUCT_DOCS, docs)
-        elif isinstance(msg.cause_by, UserRequirement):
-            requirements = await self.observe(AICOEnvironment.MSG_USER_REQUIREMENTS)
-            if not requirements:
-                return
-            analysis = await self.rc.todo.run(requirements[-1])
-            await self.publish(AICOEnvironment.MSG_REQUIREMENT_ANALYSIS, analysis)
-        elif isinstance(msg.cause_by, WritePRD):
-            analysis = await self.observe(AICOEnvironment.MSG_REQUIREMENT_ANALYSIS)
-            if not analysis:
-                return
-            prd = await self.rc.todo.run(analysis[-1])
-            await self.publish(AICOEnvironment.MSG_PRD, prd)
-        elif isinstance(msg.cause_by, RevisePRD):
-            arch_design = await self.observe(AICOEnvironment.MSG_ARCH_DESIGN)
-            if not arch_design:
-                return
-            revised_prd = await self.rc.todo.run(arch_design[-1])
-            await self.publish(AICOEnvironment.MSG_PRD_REVISED, revised_prd)
-        elif isinstance(msg.cause_by, DesignProduct):
-            design = await self.observe(AICOEnvironment.MSG_PRODUCT_DESIGN)
-            if not design:
-                return
-            product = await self.rc.todo.run(design[-1])
-            await self.publish(AICOEnvironment.MSG_PRODUCT_DESIGNED, product)
+        action_map = {
+            AICOEnvironment.MSG_USER_REQUIREMENTS: "analyze_requirement",
+            AICOEnvironment.MSG_REQUIREMENT_ANALYSIS: "write_prd",
+            AICOEnvironment.MSG_ARCH_DESIGN: "revise_prd",
+            AICOEnvironment.MSG_PRD: "design_product"
+        }
+        
+        for msg in self.rc.news:
+            action_name = action_map.get(msg.cause_by)
+            if action_name:
+                action = self.get_action(action_name)
+                result = await action.run(msg.content)
+                await self.publish(msg.cause_by, result)
 
 """
 @Modified By: Jiacheng Cai, 2023/12/15

@@ -91,7 +91,7 @@ sequenceDiagram
    rect rgb(191, 250, 253)
    note over PM,AI: 【需求收集】
     PM->>BA: 收集业务原始需求(可以是访谈材料、视频、录音等等）
-    BA->>AI: parseRequirement()，调用AI引擎，协助分析成业务需求矩阵
+    BA->>AI: parseBizRequirement()，调用AI引擎，协助分析成业务需求矩阵
     AI-->>BA: 输出业务需求矩阵
     BA->>AI: update4ABusiness()，调用AI引擎，协助更新业务架构和用户故事
     AI-->>BA: 输出业务架构和用户故事
@@ -200,7 +200,7 @@ sequenceDiagram
 - **Publish**: `{projectInfo}`项目基础配置信息
 
 #### 需求分析师 (BA)
-- **Action**: `parseRequirement()`：分析业务需求，包含用户故事编写、业务流程梳理、需求优先级排序
+- **Action**: `parseBizRequirement()`：分析业务需求，包含用户故事编写、业务流程梳理、需求优先级排序
 - **Observe**: `{projectInfo}`触发需求收集
 - **Publish**: `{requirement}`业务需求文档
 
@@ -259,7 +259,7 @@ sequenceDiagram
 
 1. **需求收集阶段**
    - PM：执行`PrepareProject()`初始化 → 发布`{projectInfo}`
-   - BA/EA：并行执行`parseRequirement()`/`parseTechRequirements()` → 发布`{requirement}`
+   - BA/EA：并行执行`parseBizRequirement()`/`parseTechRequirements()` → 发布`{requirement}`
    - PM：执行`ReviewAllRequirements()`完成需求基线
 
 2. **需求设计阶段**
@@ -286,7 +286,7 @@ sequenceDiagram
 1. **核心角色扩展**
 
    - 在 MetaGPT 中，为 PM、BA、PDM、EA、DEV、QA、DO 定义各自 `Role` 类；
-   - 实现最基础的 Action (如 `PrepareProject()`, `parseRequirement()`, `writeServiceDesign()`, `writeCode()`, etc.)。
+   - 实现最基础的 Action (如 `PrepareProject()`, `parseBizRequirement()`, `writeServiceDesign()`, `writeCode()`, etc.)。
 
 2. **消息机制**
 
