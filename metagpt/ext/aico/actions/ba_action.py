@@ -4,85 +4,80 @@
 @Time    : 2023/12/14
 @Author  : Jiacheng Cai
 @File    : ba_action.py
+@Modified By: Jiacheng Cai, 2023/12/15
+    TODO: 需要在AICO规范中明确以下内容:
+    1. 用户故事的具体格式和验收标准模板
+    2. 业务架构分析的具体维度和深度要求
+    3. 与EA的4A架构设计的衔接规范
 """
 from typing import Dict
 from metagpt.actions import Action
 
-BUSINESS_ANALYSIS_PROMPT = """
-你是一位业务分析师,请对需求进行业务分析。分析内容需要包含:
+USER_STORY_PROMPT = """
+你是一位业务分析师,请将需求转化为用户故事。要求:
 
-1. 业务背景分析
-   - 行业现状
-   - 业务痛点
-   - 市场机会
+1. 用户故事格式
+   As a <用户角色>
+   I want <功能描述>
+   So that <价值阐述>
 
-2. 业务流程分析
-   - 现有流程
-   - 优化建议
-   - 目标流程(使用mermaid flowchart)
-
-3. 组织结构分析
-   - 相关方分析
-   - 职责划分
-   - 协作模式
-
-4. 业务规则分析
-   - 业务约束
+2. 验收标准
+   - 功能验收条件
    - 业务规则
    - 异常处理
+
+3. 优先级划分
+   - 必须有(Must Have)
+   - 应该有(Should Have)
+   - 可以有(Could Have)
 
 需求信息:
 {requirements}
 
-请进行分析并返回JSON格式的分析结果。对于流程图使用mermaid语法描述。
+请分析并返回JSON格式的用户故事列表。
 """
 
-BUSINESS_REPORT_PROMPT = """
-你是一位业务分析师,请根据业务分析结果编写业务分析报告。报告需要包含:
+BUSINESS_ARCHITECTURE_PROMPT = """
+你是一位业务分析师,请对用户故事进行业务架构分析。分析内容包括:
 
-1. 摘要
-   - 项目概述
-   - 分析目标
-   - 主要发现
+1. 业务架构概述
+   - 业务愿景
+   - 业务目标
+   - 业务范围
 
-2. 业务现状
-   - 行业分析
-   - 竞争分析
-   - 内部分析
+2. 业务能力分析
+   - 核心能力
+   - 支撑能力
+   - 能力地图
 
-3. 问题与机会
-   - 业务痛点
-   - 改进机会
-   - 收益分析
+3. 业务流程设计
+   - 业务流程图(使用BPMN)
+   - 流程说明
+   - 流程优化建议
 
-4. 解决方案
-   - 业务架构
-   - 流程优化
-   - 实施建议
+4. 组织架构设计
+   - 组织结构图
+   - 角色职责
+   - 权限分配
 
-5. 结论与建议
-   - 主要结论
-   - 实施建议
-   - 风险提示
+用户故事:
+{user_stories}
 
-业务分析结果:
-{analysis}
-
-请编写业务分析报告并以JSON格式返回。对于流程图和架构图使用mermaid语法描述。
+请分析并返回JSON格式的业务架构设计文档。
 """
 
-class AnalyzeBusiness(Action):
-    """进行业务分析"""
+class WriteUserStory(Action):
+    """编写用户故事"""
     
     async def run(self, requirements: Dict) -> Dict:
-        prompt = BUSINESS_ANALYSIS_PROMPT.format(requirements=requirements)
-        analysis = await self.llm.aask(prompt)
-        return analysis
+        prompt = USER_STORY_PROMPT.format(requirements=requirements)
+        user_stories = await self.llm.aask(prompt)
+        return user_stories
 
-class WriteBusinessReport(Action):
-    """编写业务分析报告"""
+class BusinessArchitectureAnalysis(Action):
+    """业务架构分析"""
     
-    async def run(self, analysis: Dict) -> Dict:
-        prompt = BUSINESS_REPORT_PROMPT.format(analysis=analysis)
-        report = await self.llm.aask(prompt)
-        return report 
+    async def run(self, user_stories: Dict) -> Dict:
+        prompt = BUSINESS_ARCHITECTURE_PROMPT.format(user_stories=user_stories)
+        ba_analysis = await self.llm.aask(prompt)
+        return ba_analysis 

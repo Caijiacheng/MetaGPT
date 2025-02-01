@@ -4,6 +4,13 @@
 @Time    : 2023/12/14
 @Author  : Jiacheng Cai
 @File    : architect.py
+@Modified By: Jiacheng Cai, 2023/12/15
+    TODO: 需要在AICO规范中明确以下内容:
+    1. 4A架构评估的具体评分标准和权重
+    2. EA与BA在业务架构部分的协作界面
+    3. 架构设计文档的评审流程和标准
+    4. 技术选型决策的依据和标准
+    5. 架构设计的版本控制和变更管理流程
 """
 from typing import Dict
 from metagpt.roles.role import Role

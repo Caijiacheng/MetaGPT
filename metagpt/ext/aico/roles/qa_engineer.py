@@ -49,4 +49,15 @@ class QaEngineer(Role):
             if not test_results:
                 return
             bug_report = await self.rc.todo.run(test_results[-1])
-            await self.publish(AICOEnvironment.MSG_BUG_REPORT, bug_report) 
+            await self.publish(AICOEnvironment.MSG_BUG_REPORT, bug_report)
+
+"""
+@Modified By: Jiacheng Cai, 2023/12/15
+    TODO: 需要在AICO规范中明确以下内容:
+    1. 测试计划的具体格式和内容
+    2. 测试用例的设计标准
+    3. 自动化测试的覆盖率要求
+    4. 缺陷严重程度的划分标准
+    5. 测试环境的配置规范
+    6. 验收测试的标准和流程
+""" 
