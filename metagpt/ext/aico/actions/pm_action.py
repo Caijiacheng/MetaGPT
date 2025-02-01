@@ -4,90 +4,99 @@
 @Time    : 2023/12/15
 @Author  : Jiacheng Cai
 @File    : pm_action.py
+说明:
+  需求解析输出JSON格式要求：
+    {
+      "req_id": "REQ-001",
+      "req_name": "需求名称",
+      "req_description": "详细描述",
+      "source": "需求来源",
+      "priority": "高/中/低",
+      "status": "状态",
+      "submitter": "提出人",
+      "submission_time": "YYYY-MM-DD HH:mm:ss",
+      "target_completion_time": "YYYY-MM-DD HH:mm:ss",
+      "acceptance_criteria": "验收标准",
+      "remarks": ""
+    }
+  任务拆解输出JSON格式要求（每个用户故事至少包含开发和测试任务）：
+    {
+      "task_id": "T-001",
+      "related_req_id": "REQ-001",
+      "related_story_id": "US-001",
+      "task_name": "任务名称",
+      "description": "任务详细描述",
+      "type": "开发/测试/设计/文档",
+      "assignee": "负责人",
+      "status": "待开始/进行中/已完成",
+      "planned_start": "YYYY-MM-DD HH:mm:ss",
+      "planned_end": "YYYY-MM-DD HH:mm:ss",
+      "actual_start": "",
+      "actual_end": "",
+      "remarks": ""
+    }
 """
 from pathlib import Path
 from typing import Dict, List
 from datetime import datetime
 from openpyxl import Workbook, load_workbook
 import logging
-
 from metagpt.actions import Action
 
 REQUIREMENT_PARSE_PROMPT = """
-你是一个需求分析专家。请按照以下AICO规范解析用户需求：
-
-1. 需求管理表字段：
-- 需求ID (REQ-XXX格式)
-- 需求名称
-- 需求描述
-- 需求来源
-- 需求优先级 (高/中/低)
-- 需求状态
-- 提出人
-- 提出时间
-- 目标完成时间
-- 验收标准
-- 备注
+你是一个需求分析专家，请按照以下规范解析用户需求，输出JSON格式，要求包含：
+{
+  "req_id": "REQ-XXX",
+  "req_name": "需求名称",
+  "req_description": "详细描述",
+  "source": "需求来源",
+  "priority": "高/中/低",
+  "status": "状态",
+  "submitter": "提出人",
+  "submission_time": "YYYY-MM-DD HH:mm:ss",
+  "target_completion_time": "YYYY-MM-DD HH:mm:ss",
+  "acceptance_criteria": "验收标准",
+  "remarks": ""
+}
 
 原始需求:
 {idea}
-
-请解析并返回JSON格式的结果,包含上述所有字段。
 """
 
 DATA_MIGRATION_PROMPT = """
-你是一个数据迁移专家。请分析源Excel文件的结构,生成到目标格式的迁移方案。
-
+你是一个数据迁移专家，请分析以下Excel文件结构，并生成数据迁移方案，确保字段对应和缺失值处理。
 源Excel文件结构:
 {source_structure}
-
 目标格式要求:
-1. 需求管理表字段:
-{req_fields}
-
-2. 用户故事管理表字段:
-{story_fields}
-
-请生成Python代码,实现数据迁移。要求:
-1. 使用openpyxl库
-2. 保留原有数据的关联关系
-3. 对缺失字段填充默认值
-4. 确保ID格式符合规范
-5. 处理可能的数据冲突
-
-注意:
-- 需求ID格式: REQ-XXX
-- 用户故事ID格式: US-XXX
-- 时间格式: YYYY-MM-DD HH:mm:ss
+  - 需求管理表：字段要求与需求解析输出相同；
+  - 用户故事管理表：字段包括user story各字段（见用户故事规范）。
+请生成Python代码实现数据迁移。
 """
 
 TASK_BREAKDOWN_PROMPT = """
-你是一个项目管理专家。请根据以下需求和用户故事，按AICO规范拆解具体任务：
-
-任务跟踪表字段：
-- 任务ID (T-XXX格式)
-- 关联需求ID
-- 关联用户故事ID
-- 任务名称
-- 任务描述
-- 任务类型 (开发/测试/设计/文档等)
-- 负责人
-- 任务状态
-- 计划开始时间
-- 计划结束时间
-- 实际开始时间
-- 实际结束时间
-- 备注
+你是一个项目管理专家，请根据以下需求和用户故事拆解具体任务，输出JSON格式的任务列表，每个用户故事至少包含开发和测试任务，格式要求如下：
+{
+  "task_id": "T-XXX",
+  "related_req_id": "REQ-XXX",
+  "related_story_id": "US-XXX",
+  "task_name": "任务名称",
+  "description": "任务描述",
+  "type": "开发/测试/设计/文档",
+  "assignee": "负责人",
+  "status": "状态",
+  "planned_start": "YYYY-MM-DD HH:mm:ss",
+  "planned_end": "YYYY-MM-DD HH:mm:ss",
+  "actual_start": "",
+  "actual_end": "",
+  "remarks": ""
+}
 
 需求和用户故事:
 {requirements_and_stories}
-
-请拆解并返回JSON格式的任务列表。每个用户故事至少应该包含开发任务和测试任务。
 """
 
 class PrepareProject(Action):
     """准备项目文档"""
-    
     REQUIRED_SHEETS = {
         "需求管理": [
             "需求ID", "需求名称", "需求描述", "需求来源", 
@@ -154,9 +163,7 @@ class PrepareProject(Action):
             
             # 生成迁移脚本
             prompt = DATA_MIGRATION_PROMPT.format(
-                source_structure=source_structure,
-                req_fields="\n".join(f"- {f}" for f in self.REQUIRED_SHEETS["需求管理"]),
-                story_fields="\n".join(f"- {f}" for f in self.REQUIRED_SHEETS["用户故事管理"])
+                source_structure=source_structure
             )
             
             migration_code = await self.llm.aask(prompt)
@@ -261,7 +268,7 @@ class ParseRequirements(Action):
             next_req_id = self._get_next_req_id(ws)
             
             # 更新requirements中的ID
-            requirements["需求ID"] = next_req_id
+            requirements["req_id"] = next_req_id
             
             # 添加新行
             ws.append([
