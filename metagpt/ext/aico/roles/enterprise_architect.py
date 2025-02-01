@@ -17,13 +17,13 @@ from metagpt.roles.role import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ea_action import Conduct4AAssessment, WriteArchitectureDesign
 
-class EnterpriseArchitect(Role):
-    """企业架构师角色,负责4A架构评估和架构设计"""
+class AICOEnterpriseArchitect(Role):
+    """企业架构师角色,负责架构设计和评估"""
     
-    name: str = "Bob"
+    name: str = "Eric"
     profile: str = "Enterprise Architect"
-    goal: str = "设计符合企业级标准的软件系统架构,确保技术方案的合理性"
-    constraints: str = "严格遵循AICO的架构设计规范和4A评估标准"
+    goal: str = "设计和评估系统架构"
+    constraints: str = "遵循AICO的4A架构标准"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)

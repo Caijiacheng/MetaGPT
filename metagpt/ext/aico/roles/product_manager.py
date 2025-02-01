@@ -21,7 +21,7 @@ from metagpt.environment.aico.aico_env import AICOEnvironment
 from metagpt.actions import UserRequirement, PrepareDocuments
 from ..actions.pdm_action import WritePRD, RevisePRD, AnalyzeRequirement, DesignProduct
 
-class ProductManager(Role):
+class AICOProductManager(Role):
     """产品经理角色,负责需求分析和产品设计"""
     
     name: str = "Alice"

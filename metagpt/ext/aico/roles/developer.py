@@ -25,7 +25,7 @@ from ..actions.dev_action import (
     WriteCode, CodeReview, DebugCode, WriteUnitTest
 )
 
-class Developer(Role):
+class AICODeveloper(Role):
     """开发工程师角色,负责技术方案设计和代码实现"""
     
     name: str = "David"

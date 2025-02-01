@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-@Time    : 2023/12/14
+@Time    : 2023/12/15
 @Author  : Jiacheng Cai
 @File    : ba_action.py
 @Modified By: Jiacheng Cai, 2023/12/15
@@ -11,30 +11,27 @@
     3. 与EA的4A架构设计的衔接规范
 """
 from typing import Dict
+from openpyxl import load_workbook
 from metagpt.actions import Action
 
 USER_STORY_PROMPT = """
 你是一位业务分析师,请将需求转化为用户故事。要求:
 
-1. 用户故事格式
-   As a <用户角色>
-   I want <功能描述>
-   So that <价值阐述>
-
-2. 验收标准
-   - 功能验收条件
-   - 业务规则
-   - 异常处理
-
-3. 优先级划分
-   - 必须有(Must Have)
-   - 应该有(Should Have)
-   - 可以有(Could Have)
+1. 用户故事格式：
+- 故事ID (US-XXX格式)
+- 关联需求ID
+- 故事名称
+- 故事描述 (As a ..., I want ..., So that ...)
+- 优先级 (高/中/低)
+- 状态
+- 验收标准
+- 创建时间
+- 备注
 
 需求信息:
 {requirements}
 
-请分析并返回JSON格式的用户故事列表。
+请分析并返回JSON格式的用户故事列表,包含上述所有字段。
 """
 
 BUSINESS_ARCHITECTURE_PROMPT = """
@@ -69,10 +66,25 @@ BUSINESS_ARCHITECTURE_PROMPT = """
 class WriteUserStory(Action):
     """编写用户故事"""
     
-    async def run(self, requirements: Dict) -> Dict:
-        prompt = USER_STORY_PROMPT.format(requirements=requirements)
+    async def run(self, requirements_info: Dict) -> Dict:
+        # 使用LLM生成用户故事
+        prompt = USER_STORY_PROMPT.format(
+            requirements=requirements_info.get("requirements", "")
+        )
         user_stories = await self.llm.aask(prompt)
-        return user_stories
+        
+        # 将用户故事写入Excel
+        tracking_file = requirements_info.get("tracking_file")
+        if tracking_file:
+            wb = load_workbook(tracking_file)
+            ws = wb["用户故事管理"]
+            # TODO: 将user_stories写入ws
+            wb.save(tracking_file)
+        
+        return {
+            "user_stories": user_stories,
+            "tracking_file": tracking_file
+        }
 
 class BusinessArchitectureAnalysis(Action):
     """业务架构分析"""

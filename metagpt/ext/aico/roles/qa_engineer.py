@@ -10,7 +10,7 @@ from metagpt.roles.role import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.qa_action import WriteTestCase, ExecuteTest, ReportBug
 
-class QaEngineer(Role):
+class AICOQaEngineer(Role):
     """测试工程师角色,负责测试用例设计和执行"""
     
     name: str = "Quincy"
