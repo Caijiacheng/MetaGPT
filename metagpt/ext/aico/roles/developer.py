@@ -1,45 +1,52 @@
-from typing import Dict, Any
-from .base_role import BaseAICORole
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+@Time    : 2023/12/14
+@Author  : Jiacheng Cai
+@File    : developer.py
+"""
+from typing import Dict
+from metagpt.roles.role import Role
+from metagpt.environment.aico.aico_env import AICOEnvironment
+from ..actions.dev_action import WriteCode, CodeReview, DebugCode
 
-class Developer(BaseAICORole):
-    """开发工程师角色"""
+class Developer(Role):
+    """开发工程师角色,负责代码开发和调试"""
     
-    def __init__(self):
-        abilities = {
-            "write_code": self.write_code,
-            "run_code": self.run_code,
-            "review_code": self.review_code,
-            "revise_code": self.revise_code,
-            "debug_reflection": self.debug_reflection
-        }
-        super().__init__("Developer", abilities)
+    name: str = "David"
+    profile: str = "Developer"
+    goal: str = "编写高质量代码,实现系统功能,确保代码可维护性"
+    constraints: str = "严格遵循代码规范和最佳实践"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([WriteCode])
+        self._watch([CodeReview, DebugCode])
         
-    async def run(self) -> Any:
-        """开发工程师主要工作流程"""
-        # TODO: 实现开发工程师的工作流程
-        pass
+    async def _act(self) -> None:
+        """处理代码开发相关动作"""
+        msg = self.rc.news[-1]
         
-    async def write_code(self, design: Dict) -> Dict:
-        """编写代码"""
-        # TODO: 实现代码编写逻辑
-        return {"status": "completed", "code": ""}
-        
-    async def run_code(self, code: str) -> Dict:
-        """运行代码"""
-        # TODO: 实现代码运行逻辑
-        return {"status": "success"}
-        
-    async def review_code(self, code: str) -> Dict:
-        """代码评审"""
-        # TODO: 实现代码评审逻辑
-        return {"status": "reviewed"}
-        
-    async def revise_code(self, feedback: Dict) -> Dict:
-        """修改代码"""
-        # TODO: 实现代码修改逻辑
-        return {"status": "revised"}
-        
-    async def debug_reflection(self, error: Dict) -> Dict:
-        """代码调试与优化"""
-        # TODO: 实现代码调试逻辑
-        return {"status": "debugged"} 
+        if isinstance(msg.cause_by, WriteCode):
+            # 处理代码编写
+            tasks = await self.observe(AICOEnvironment.MSG_TASKS)
+            if not tasks:
+                return
+            code = await self.rc.todo.run(tasks[-1])
+            await self.publish(AICOEnvironment.MSG_CODE, code)
+            
+        elif isinstance(msg.cause_by, CodeReview):
+            # 处理代码评审
+            code = await self.observe(AICOEnvironment.MSG_CODE)
+            if not code:
+                return
+            review = await self.rc.todo.run(code[-1])
+            await self.publish(AICOEnvironment.MSG_CODE_REVIEW, review)
+            
+        elif isinstance(msg.cause_by, DebugCode):
+            # 处理代码调试
+            bug_report = await self.observe(AICOEnvironment.MSG_BUG_REPORT)
+            if not bug_report:
+                return
+            debug_result = await self.rc.todo.run(bug_report[-1])
+            await self.publish(AICOEnvironment.MSG_DEBUG_RESULT, debug_result) 

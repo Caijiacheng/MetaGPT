@@ -1,35 +1,44 @@
-from typing import Dict, Any
-from .base_role import BaseAICORole
-from metagpt.actions import UserRequirement, AnalyzeRequirements, WriteRequirementDoc
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+@Time    : 2023/12/14
+@Author  : Jiacheng Cai
+@File    : business_analyst.py
+"""
+from typing import Dict
+from metagpt.roles.role import Role
+from metagpt.environment.aico.aico_env import AICOEnvironment
+from ..actions.ba_action import AnalyzeBusiness, WriteBusinessReport
 
-class BusinessAnalyst(BaseAICORole):
-    """需求分析师角色"""
+class BusinessAnalyst(Role):
+    """业务分析师角色,负责业务流程分析和业务架构设计"""
     
-    def __init__(self):
-        super().__init__(
-            name="BA",
-            profile="BusinessAnalyst",
-            goal="分析和管理项目需求"
-        )
-    
-    def _init_actions(self):
-        self._watch([UserRequirement])  # 监听用户需求
-        self.set_actions([
-            AnalyzeRequirements,  # 自定义的需求分析action
-            WriteRequirementDoc   # 自定义的需求文档编写action
-        ])
+    name: str = "Frank"
+    profile: str = "Business Analyst"
+    goal: str = "分析业务流程,设计业务架构,确保系统满足业务需求"
+    constraints: str = "严格遵循AICO的业务分析规范"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_actions([AnalyzeBusiness])
+        self._watch([WriteBusinessReport])
         
-    async def run(self) -> Any:
-        """需求分析师主要工作流程"""
-        # TODO: 实现需求分析师的工作流程
-        pass
+    async def _act(self) -> None:
+        """处理业务分析相关动作"""
+        msg = self.rc.news[-1]
         
-    async def parse_requirements(self, raw_requirements: Dict) -> Dict:
-        """解析需求"""
-        # TODO: 实现需求解析逻辑
-        return {"status": "parsed", "requirements": raw_requirements}
-        
-    async def reflect(self) -> Dict:
-        """反思需求"""
-        # TODO: 实现需求反思逻辑
-        return {"status": "reflected"} 
+        if isinstance(msg.cause_by, AnalyzeBusiness):
+            # 处理业务分析
+            raw_requirements = await self.observe(AICOEnvironment.MSG_RAW_REQUIREMENTS)
+            if not raw_requirements:
+                return
+            analysis = await self.rc.todo.run(raw_requirements[-1])
+            await self.publish(AICOEnvironment.MSG_BUSINESS_ANALYSIS, analysis)
+            
+        elif isinstance(msg.cause_by, WriteBusinessReport):
+            # 处理业务报告
+            analysis = await self.observe(AICOEnvironment.MSG_BUSINESS_ANALYSIS)
+            if not analysis:
+                return
+            report = await self.rc.todo.run(analysis[-1])
+            await self.publish(AICOEnvironment.MSG_BUSINESS_REPORT, report) 
