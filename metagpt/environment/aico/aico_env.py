@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 from metagpt.environment.base_env import Environment
 from metagpt.ext.aico.services.spec_service import SpecService
+from metagpt.schemas.message import MessageSchema
 
 
 class AICOEnvironment(Environment):
@@ -39,6 +40,45 @@ class AICOEnvironment(Environment):
     MSG_TEST_CASES           = "test_cases"           # 测试用例（JSON格式，包含：test_case_id, description, steps, expected_results, test_data）
     MSG_TEST_RESULTS         = "test_results"         # 测试结果（JSON格式描述详细执行记录）
     MSG_DEBUG_RESULT         = "debug_result"         # 代码调试结果（JSON格式）
+    MSG_BUSINESS_ARCH        = "business_arch"        # 业务架构产出
+    MSG_TECH_ARCH            = "tech_arch"            # 技术架构产出
+    MSG_REQUIREMENT_BIZ_ANALYSIS = MessageSchema(
+        name="requirement:biz_analysis",
+        desc="业务分析任务",
+        content={
+            "req_id": str,          # 原始需求ID（文件stem）
+            "file_path": str,       # 原始需求文件路径
+            "type": str             # 需求类型 business/tech
+        }
+    )
+    MSG_REQUIREMENT_TECH_ANALYSIS = MessageSchema(
+        name="requirement:tech_analysis",
+        desc="技术分析任务",
+        content={
+            "req_id": str,          # 原始需求ID
+            "biz_req_id": str,      # 关联的业务需求ID（RQ-开头）
+            "file_path": str        # 原始需求文件路径
+        }
+    )
+    MSG_BA_ANALYSIS_DONE = MessageSchema(
+        name="ba_analysis_done",
+        desc="业务分析完成通知",
+        content={
+            "req_id": str,          # 原始需求ID
+            "standard_req": dict,  # 标准业务需求（符合spec）
+            "user_stories": list,   # 用户故事列表
+            "output_files": list    # 生成的文档路径列表
+        }
+    )
+    MSG_EA_ANALYSIS_DONE = MessageSchema(
+        name="ea_analysis_done",
+        desc="技术分析完成通知",
+        content={
+            "req_id": str,          # 原始需求ID
+            "tech_req": dict,       # 标准技术需求
+            "output_files": list    # 生成的架构文档路径
+        }
+    )
 
     def __init__(
         self,

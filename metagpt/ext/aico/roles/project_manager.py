@@ -28,6 +28,8 @@ from metagpt.utils.common import format_message
 import logging
 from metagpt.ext.aico.config import config
 import shutil
+import asyncio
+from ..services.project_tracking_service import ProjectTrackingService, TrackingSheet, ColumnIndex
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +45,19 @@ class AICOProjectManager(Role):
         super().__init__(**kwargs)
         self.set_actions([ReviewRequirement, ReviewDesign, ReviewAllRequirements])  # 只保留需要LLM交互的Action
         self._init_project()  # 项目初始化改为角色内部方法
+        self.tracking_svc = ProjectTrackingService(
+            self.project_root / "tracking/ProjectTracking.xlsx"
+        )
         
     def _init_project(self):
         """初始化或加载项目结构"""
-        # 项目存在性检查
         if self.project_root.exists():
             logger.info(f"加载现有项目: {self.project_root}")
-            # 新增校验逻辑
+            # 调整顺序：先校验再同步
             tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
-            if tracking_file.exists():
-                if not self._validate_tracking_file(tracking_file):
-                    logger.error("项目跟踪表结构不兼容，请手动处理！")
-                    raise ValueError("ProjectTracking.xlsx schema mismatch")
+            if tracking_file.exists() and not self._validate_tracking_file():
+                logger.error("项目跟踪表结构不兼容，请手动处理！")
+                raise ValueError("ProjectTracking.xlsx schema mismatch")
             self._sync_specs()
             return
         
@@ -99,48 +102,11 @@ class AICOProjectManager(Role):
         raise FileNotFoundError(f"规范文件不存在: {spec_type}")
 
     def _create_tracking_file(self):
-        """创建项目跟踪表（完整结构）"""
-        tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
-        wb = Workbook()
-        
-        # 根据project_tracking_spec.md第2章定义完整表结构
-        sheets = {
-            "原始需求": [
-                "需求文件", "需求类型", "添加时间", "当前状态", 
-                "关联需求ID", "BA解析时间", "EA解析时间", 
-                "完成时间", "备注"
-            ],
-            "需求管理": [
-                "需求ID", "原始需求文件", "需求名称", "需求描述",
-                "需求来源", "需求优先级", "需求状态", 
-                "提出人/负责人", "提出时间", "目标完成时间",
-                "验收标准", "备注"
-            ],
-            "用户故事管理": [
-                "用户故事ID", "关联需求ID", "用户故事名称",
-                "用户故事描述", "优先级", "状态", 
-                "验收标准", "创建时间", "备注"
-            ],
-            "任务跟踪": [
-                "任务ID", "关联需求ID", "关联用户故事ID",
-                "任务名称", "任务描述", "任务类型",
-                "负责人", "任务状态", "计划开始时间",
-                "计划结束时间", "实际开始时间", 
-                "实际结束时间", "备注"
-            ]
-        }
-        
-        # 删除默认创建的Sheet
-        if "Sheet" in wb.sheetnames:
-            del wb["Sheet"]
-            
-        # 创建所有工作表并添加表头
-        for sheet_name, headers in sheets.items():
-            ws = wb.create_sheet(sheet_name)
-            ws.append(headers)
-        
-        wb.save(tracking_file)
-        logger.info(f"创建项目跟踪表：{tracking_file}")
+        """创建项目跟踪表（改为通过服务类）"""
+        self.tracking_svc = ProjectTrackingService(
+            self.project_root / "tracking/ProjectTracking.xlsx"
+        )
+        self.tracking_svc.save()
 
     async def _act(self) -> None:
         """遵循README_AICO_CN_1.2.md的时序逻辑"""
@@ -154,68 +120,182 @@ class AICOProjectManager(Role):
         await self._process_implementation()
 
     async def _process_requirements(self):
-        """处理需求收集阶段（根据文档6.1节）"""
-        # 从环境获取原始需求
-        req_msg = await self.observe(AICOEnvironment.MSG_RAW_REQUIREMENTS)
-        if not req_msg:
+        """处理需求全流程（从config获取）"""
+        # 从config获取原始需求
+        raw_req = config.extra.get("raw_requirement")
+        if not raw_req:
+            logger.warning("未找到原始需求配置")
             return
         
-        # 将原始需求记录到跟踪表
-        tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
-        self._add_raw_requirement(tracking_file, req_msg.content)
+        # 保存需求文件
+        req_file = self._save_requirement_file(raw_req)
         
-        # 发布需求分析任务（根据文档6.1.2节）
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_ANALYSIS, {
-            "requirement_id": req_msg.msg_id,
-            "content": req_msg.content,
-            "source": "user_input",
-            "priority": "P0"
+        # 登记到跟踪表
+        self._add_raw_requirement_to_tracking({
+            "file_path": str(req_file.relative_to(self.project_root)),
+            "type": raw_req["type"],
+            "status": "待分析",
+            "comment": raw_req.get("comment", "")
         })
         
-        # 监听分析结果（根据文档6.1.3节）
-        async for analysis_msg in self.observe(AICOEnvironment.MSG_PARSED_REQUIREMENTS):
-            # 执行需求复核
-            review_action = ReviewAllRequirements()  # 新增复合需求的Action
-            review_result = await self.rc.run(review_action.run(analysis_msg.content))
-            
-            if review_result.instruct_content.get("need_review"):
-                await self._handle_review_failure(review_result)
-            else:
-                # 更新需求基线（根据文档6.1.4节）
-                self._update_requirement_baseline(analysis_msg.content)
-                await self.publish(AICOEnvironment.MSG_REQUIREMENT_BASELINE, {
-                    "version": "1.0",
-                    "requirements": analysis_msg.content
-                })
+        # 处理历史未分析需求（含重试机制）
+        pending_reqs = self._get_pending_requirements()
+        for req in pending_reqs:
+            await self._dispatch_requirement_analysis(req)
+        pass
 
-    def _add_raw_requirement(self, tracking_file: Path, req_data: dict):
-        """将原始需求添加到跟踪表"""
+    async def _handle_new_requirement(self, msg):
+        """处理新输入的原始需求"""
+        # 保存到项目目录（根据文档5.2节）
+        req_file = self._save_requirement_file(msg.content)
+        
+        # 登记到跟踪表（文档6.1.1节）
+        self._add_raw_requirement_to_tracking({
+            "file_path": str(req_file.relative_to(self.project_root)),
+            "type": msg.content.get("type", "business"),
+            "status": "待分析",
+            "comment": msg.content.get("comment", "")
+        })
+        
+        logger.info(f"新增需求登记完成：{req_file.name}")
+
+    def _save_requirement_file(self, req_data: dict) -> Path:
+        """保存需求文件到统一目录"""
+        reqs_dir = self.project_root / "docs/requirements/raw"
+        reqs_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 生成文件名（时间戳+类型）
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"REQ_{timestamp}_{req_data['type']}.txt"
+        req_file = reqs_dir / filename
+        
+        # 写入纯文本内容
+        req_file.write_text(req_data["content"], encoding="utf-8")
+        return req_file
+
+    def _add_raw_requirement_to_tracking(self, req_info: dict):
+        """添加需求到跟踪表"""
+        tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
         try:
             wb = load_workbook(tracking_file)
             ws = wb["原始需求"]
             
-            # 生成需求ID（根据文档附录A的编号规则）
-            req_id = f"REQ-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            # 插入新行（根据project_tracking_spec.md的字段顺序）
             new_row = [
-                req_data.get("file_path", ""),    # 需求文件
-                req_data.get("type", "undefined"),# 需求类型
-                datetime.now().isoformat(),       # 添加时间
-                "待分析",                         # 当前状态
-                req_id,                          # 关联需求ID（初始与自身关联）
-                "",                              # BA解析时间
-                "",                              # EA解析时间
-                "",                              # 完成时间
-                req_data.get("comment", "")      # 备注
+                req_info["file_path"],    # 需求文件
+                req_info["type"],         # 需求类型
+                datetime.now().isoformat(), # 添加时间
+                req_info["status"],       # 当前状态
+                "",                       # 关联需求ID（初始为空）
+                "",                       # BA解析时间
+                "",                       # EA解析时间
+                "",                       # 完成时间
+                req_info["comment"]       # 备注
             ]
             ws.append(new_row)
             wb.save(tracking_file)
-            logger.info(f"新增原始需求: {req_id}")
-            
         except Exception as e:
-            logger.error(f"记录需求失败: {str(e)}")
-            raise RuntimeError("需求跟踪表更新失败") from e
+            logger.error(f"跟踪表更新失败：{str(e)}")
+            raise RuntimeError("需求登记失败") from e
+
+    def _get_pending_requirements(self) -> list:
+        """获取待处理的需求列表"""
+        tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
+        pending = []
+        
+        try:
+            wb = load_workbook(tracking_file)
+            ws = wb["原始需求"]
+            
+            for row in ws.iter_rows(min_row=2):
+                # 检查状态列（第4列）和解析时间列（5-6列）
+                status = row[3].value
+                ba_time = row[5].value
+                ea_time = row[6].value
+                
+                if status == "待分析" or not ba_time or not ea_time:
+                    pending.append({
+                        "file": row[0].value,
+                        "type": row[1].value,
+                        "added_time": row[2].value,
+                        "status": status
+                    })
+        except Exception as e:
+            logger.error(f"读取跟踪表失败：{str(e)}")
+        
+        return pending
+
+    async def _dispatch_requirement_analysis(self, req_info: dict):
+        """使用跟踪服务处理需求分析"""
+        req_file = self.project_root / req_info["file"]
+        raw_req_path = str(req_file.relative_to(self.project_root))
+        
+        # 检查BA分析状态
+        if not self.tracking_svc.get_raw_requirement_status(raw_req_path) or \
+           not self.tracking_svc.get_raw_requirement_status(raw_req_path).get("ba_time"):
+            await self._process_ba_analysis(req_file, raw_req_path)
+            
+        # 检查EA分析状态    
+        if not self.tracking_svc.get_raw_requirement_status(raw_req_path) or \
+           not self.tracking_svc.get_raw_requirement_status(raw_req_path).get("ea_time"):
+            await self._process_ea_analysis(req_file, raw_req_path)
+
+    async def _process_ba_analysis(self, req_file: Path, raw_req_path: str):
+        """处理BA分析流程"""
+        await self.publish(AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS, {
+            "req_id": req_file.stem,
+            "file_path": str(req_file),
+            "type": "business"
+        })
+        
+        async for ba_msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE):
+            if ba_msg.content["req_id"] == req_file.stem:
+                # 生成业务需求ID
+                biz_req_id = f"RQ-B-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                
+                # 使用服务类更新跟踪表
+                self.tracking_svc.add_requirement(
+                    req_id=biz_req_id,
+                    raw_file=raw_req_path,
+                    req_data=ba_msg.content["standard_req"],
+                    output_files=ba_msg.content["output_files"]
+                )
+                
+                self.tracking_svc.add_user_stories(
+                    biz_req_id=biz_req_id,
+                    stories=ba_msg.content["user_stories"]
+                )
+                
+                self.tracking_svc.update_raw_requirement_status(
+                    file_path=raw_req_path,
+                    status="业务分析完成"
+                )
+                self.tracking_svc.save()
+                break
+
+    async def _process_ea_analysis(self, req_file: Path, raw_req_path: str):
+        """处理EA分析流程"""
+        await self.publish(AICOEnvironment.MSG_REQUIREMENT_TECH_ANALYSIS, {
+            "req_id": raw_req_path.split("/")[-1],
+            "biz_req_id": raw_req_path.split("/")[-1].split("-")[1],
+            "file_path": raw_req_path
+        })
+        
+        async for ea_msg in self.observe(AICOEnvironment.MSG_EA_ANALYSIS_DONE):
+            # 生成技术需求ID
+            tech_req_id = f"RQ-T-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
+            # 更新跟踪表
+            self.tracking_svc.add_requirement(
+                req_id=tech_req_id,
+                raw_file=raw_req_path,
+                req_data=ea_msg.content["tech_req"],
+                output_files=ea_msg.content["output_files"]
+            )
+            
+            self.tracking_svc.update_raw_requirement_status(
+                file_path=raw_req_path,
+                status="技术分析完成"
+            )
 
     async def _process_design(self):
         """处理设计阶段"""
@@ -244,29 +324,6 @@ class AICOProjectManager(Role):
     def _update_task_status(self, task_info: dict):
         """更新任务状态（TODO: 需要实现Excel操作）"""
         logger.debug(f"更新任务状态：{format_message(task_info)}")
-
-    def _load_raw_req_status(self, tracking_file: Path) -> Dict:
-        """从Excel加载原始需求状态"""
-        status_dict = {}
-        wb = load_workbook(tracking_file)
-        if "原始需求" in wb.sheetnames:
-            ws = wb["原始需求"]
-            headers = [cell.value for cell in ws[1]]
-            for row in ws.iter_rows(min_row=2):
-                values = [cell.value for cell in row]
-                if not values[0]:  # 跳过空行
-                    continue
-                status_dict[values[0]] = {  # values[0] 是需求文件路径
-                    "file": values[0],
-                    "type": values[1],
-                    "added_time": values[2],
-                    "status": values[3],
-                    "ba_parsed_time": values[4],
-                    "ea_parsed_time": values[5],
-                    "completed_time": values[6],
-                    "notes": values[7]
-                }
-        return status_dict
         
     def _update_raw_req_status(self, tracking_file: Path, req_file: Path, 
                               status: str = "new", role: str = None,
@@ -327,76 +384,24 @@ class AICOProjectManager(Role):
             
         wb.save(tracking_file)
         
-    def _check_req_needs_parsing(self, tracking_file: Path, req_file: Path, role: str) -> bool:
-        """检查需求是否需要解析"""
-        status_dict = self._load_raw_req_status(tracking_file)
-        req_key = str(req_file)
-        
-        if req_key not in status_dict:
-            return True
-            
-        status = status_dict[req_key]
-        if role == "BA":
-            return not status.get("ba_parsed_time")
-        elif role == "EA":
-            return not status.get("ea_parsed_time")
-        return False
-        
-    async def _handle_review_failure(self, review_result: Dict):
-        """处理复核不通过的情况"""
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_REVIEW, {
-            "req_type": "业务需求" if "business" in review_result else "技术需求",
-            "status": "need_human_review",
-            "issues": review_result.get("issues", []),
-            "suggestions": review_result.get("suggestions", "")
-        })
-
-    async def _start_design_phase(self, parsed_requirements: Dict):
-        """启动设计阶段"""
-        baseline = {
-            "business": parsed_requirements["business"],
-            "technical": parsed_requirements["technical"],
-            "user_stories": self._get_latest_msg_content(AICOEnvironment.MSG_USER_STORIES),
-            "architecture": self._get_latest_msg_content(AICOEnvironment.MSG_4A_ASSESSMENT)
-        }
-        
-        await self.publish(AICOEnvironment.MSG_DESIGN_PHASE_START, baseline)
-        # 后续迭代计划流程...
-
-    async def _get_parsed_requirement(self, msg_type: str) -> Dict:
-        """获取最新解析结果"""
-        msgs = await self.observe(msg_type)
-        return msgs[-1] if msgs else None
-
-    def _get_latest_msg_content(self, msg_type: str) -> Dict:
-        """直接获取环境中的最新消息内容"""
-        return self.rc.env.get_latest(msg_type).content if self.rc.env.get_latest(msg_type) else None
-
-    def _validate_tracking_file(self, file_path: Path) -> bool:
-        """校验跟踪表结构是否符合当前版本"""
-        expected_sheets = {
-            "原始需求": ["需求文件", "需求类型", "添加时间", "当前状态", "关联需求ID", "BA解析时间", "EA解析时间", "完成时间", "备注"],
-            "需求管理": ["需求ID", "原始需求文件", "需求名称", "需求描述", "需求来源", "需求优先级", "需求状态", "提出人/负责人", "提出时间", "目标完成时间", "验收标准", "备注"],
-            "用户故事管理": ["用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述", "优先级", "状态", "验收标准", "创建时间", "备注"],
-            "任务跟踪": ["任务ID", "关联需求ID", "关联用户故事ID", "任务名称", "任务描述", "任务类型", "负责人", "任务状态", "计划开始时间", "计划结束时间", "实际开始时间", "实际结束时间", "备注"]
-        }
-        
+    def _validate_tracking_file(self) -> bool:
+        """校验跟踪表结构（改为通过服务类）"""
         try:
-            wb = load_workbook(file_path)
-            for sheet_name, expected_headers in expected_sheets.items():
-                if sheet_name not in wb.sheetnames:
-                    logger.error(f"缺失工作表: {sheet_name}")
-                    return False
-                    
-                ws = wb[sheet_name]
-                actual_headers = [cell.value for cell in ws[1]]  # 读取第一行作为表头
-                if actual_headers != expected_headers:
-                    logger.error(f"工作表'{sheet_name}'结构不匹配\n期望: {expected_headers}\n实际: {actual_headers}")
-                    return False
+            # 服务类内部实现校验逻辑
+            self.tracking_svc._get_workbook()
             return True
         except Exception as e:
             logger.error(f"跟踪文件校验失败: {str(e)}")
             return False
+
+    def get_requirement_status(self, req_id: str) -> dict:
+        """获取需求状态"""
+        return self.tracking_svc.get_requirement_status(req_id)
+
+    def update_task_progress(self, task_id: str, progress: float):
+        """更新任务进度"""
+        self.tracking_svc.update_task_progress(task_id, progress)
+        self.tracking_svc.save()
 
 # 打印当前工作空间配置
 print(config.workspace)

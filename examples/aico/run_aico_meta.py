@@ -35,18 +35,22 @@ def load_requirement(req_input: str) -> str:
 
 @app.command()
 def main(
-    requirement: str = typer.Argument(..., help="需求输入（文件路径或文本）"),
+    requirement: str = typer.Argument(..., help="需求输入（文本内容）"),
     project_name: str = typer.Option(None, help="项目名称（覆盖配置）"),
     output_root: str = typer.Option(None, help="输出目录（覆盖配置）"),
     n_round: int = typer.Option(5, help="最大对话轮数"),
     investment: float = typer.Option(10.0, help="投资金额"),
 ):
     """启动AICO项目"""
-    # 合并配置参数
+    # 处理需求输入（仅文本）
     config.extra.update({
+        "raw_requirement": {
+            "type": "business",  # 默认类型
+            "content": requirement,
+            "source": "cli_input"
+        },
         "project_name": project_name or config.project_name,
-        "output_root": output_root or str(config.workspace.project_root),
-        "requirement": load_requirement(requirement)
+        "output_root": output_root or str(config.workspace.project_root)
     })
     
     # 初始化环境
@@ -77,6 +81,34 @@ def main(
     except RuntimeError as e:
         logger.critical(f"需求处理失败: {str(e)}")
         exit(1)
+
+def _process_requirement_input(req_input: str) -> dict:
+    """统一处理需求输入"""
+    req_path = Path(req_input)
+    if req_path.exists():
+        content = req_path.read_text(encoding="utf-8")
+        return {
+            "type": _detect_requirement_type(req_path),
+            "content": content,
+            "file_path": str(req_path)
+        }
+    else:
+        return {
+            "type": "business",
+            "content": req_input,
+            "source": "direct_input"
+        }
+
+def _detect_requirement_type(file_path: Path) -> str:
+    """根据文件扩展名判断需求类型"""
+    ext = file_path.suffix.lower()
+    return {
+        ".md": "business",
+        ".xlsx": "structured",
+        ".txt": "interview",
+        ".mp4": "media",
+        ".mp3": "media"
+    }.get(ext, "unknown")
 
 if __name__ == "__main__":
     app()

@@ -36,42 +36,31 @@ class AICOEnterpriseArchitect(AICOBaseRole):
         ]
         
     async def _act(self):
-        # 1. 等待业务架构完成
-        biz_arch = await self.observe(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE)
-        if not biz_arch:
-            self.logger.info("等待业务架构输入...")
-            return
+        # 接收分析任务（依赖BA输出）
+        msg = await self.observe(AICOEnvironment.MSG_REQUIREMENT_TECH_ANALYSIS)
+        req_file = Path(msg.content["file_path"])
         
-        # 2. 获取技术需求
-        tech_req = await self.observe(AICOEnvironment.MSG_TECH_REQUIREMENT)
-        if not tech_req:
-            self.logger.info("未收到技术需求")
-            return
+        # 执行分析...
+        tech_arch = await self._analyze_tech(msg.content["business_arch"])
         
-        # 3. 解析技术需求
-        parse_action = self.get_action("parse_tech_requirements")
-        req_matrix = await parse_action.run({
-            "requirements": tech_req[-1].content,
-            "business_arch": biz_arch[-1].content,
-            "tracking_file": "ReqTracking.xlsx"
+        # 更新跟踪表状态
+        self._update_tracking_status(req_file, "ea_parsed_time")
+        
+        # 发布技术架构
+        await self.publish(AICOEnvironment.MSG_TECH_ARCH, {
+            "req_id": msg.content["req_id"],
+            "architecture": tech_arch
         })
         
-        # 4. 更新4A架构
-        update_action = self.get_action("update_4a_tech")
-        arch_result = await update_action.run({
-            "requirement_matrix": req_matrix,
-            "business_arch": biz_arch[-1].content
+        # 发布分析完成通知
+        await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_DONE, {
+            "req_id": req_file.stem,
+            "output_files": [
+                str(req_file),
+                str(tech_arch)
+            ],
+            "status": "completed"
         })
-        
-        # 5. 发布架构设计
-        await self.publish(AICOEnvironment.MSG_4A_ASSESSMENT, arch_result)
-        
-        # 6. 更新需求跟踪状态
-        self._update_req_status(
-            req_matrix["tracking_file"], 
-            status="parsed_by_ea",
-            req_id=req_matrix["requirement_id"]
-        )
 
     def _update_req_status(self, tracking_file: Path, status: str, req_id: str):
         """更新需求跟踪表状态"""

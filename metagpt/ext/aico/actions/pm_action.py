@@ -201,23 +201,34 @@ class PrepareProject(Action):
         }
 
 class ReviewAllRequirements(Action):
-    """复核所有已分析需求（根据文档6.1.3节）"""
+    """复合需求检查（严格遵循文档6.1.3节要求）"""
     
-    async def run(self, requirements: dict):
-        # 实现需求一致性检查逻辑
-        # 返回结构示例:
-        # {
-        #   "consistency": True,
-        #   "conflicts": [],
-        #   "suggestions": "需求基线已就绪"
-        # }
+    async def run(self, parsed_data: dict) -> ActionOutput:
+        """执行三向一致性检查"""
+        check_result = {
+            "business_tech_consistency": await self._check_biz_tech_alignment(parsed_data),
+            "story_coverage": await self._check_story_coverage(parsed_data),
+            "traceability": await self._check_traceability(parsed_data)
+        }
+        
         return ActionOutput(
-            instruct_content=await self._check_consistency(requirements),
-            content=requirements
+            instruct_content=check_result,
+            content=parsed_data
         )
-    
-    async def _check_consistency(self, reqs: dict) -> dict:
-        # 实现具体的检查逻辑...
+
+    async def _check_biz_tech_alignment(self, data: dict) -> dict:
+        """业务需求与技术需求对齐检查"""
+        # 实现逻辑参考文档6.1.3节第1点
+        pass
+
+    async def _check_story_coverage(self, data: dict) -> dict:
+        """用户故事覆盖检查"""
+        # 实现逻辑参考文档6.1.3节第2点
+        pass
+
+    async def _check_traceability(self, data: dict) -> dict:
+        """需求可追溯性检查"""
+        # 实现逻辑参考文档6.1.3节第3点
         pass
 
 class PlanSprintReleases(Action):

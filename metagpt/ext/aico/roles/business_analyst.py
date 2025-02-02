@@ -17,6 +17,7 @@ from typing import Dict
 from .base_role import AICOBaseRole
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ba_action import ParseBizRequirement, Update4ABusiness
+from pathlib import Path
 
 class AICOBusinessAnalyst(AICOBaseRole):
     """业务分析师角色"""
@@ -33,51 +34,35 @@ class AICOBusinessAnalyst(AICOBaseRole):
         ]
         
     async def _act(self) -> None:
-        # 1. 观察是否有新的项目信息
-        project_info = await self.observe(AICOEnvironment.MSG_PROJECT_INFO)
-        if not project_info:
-            return
-            
-        # 2. 获取原始需求
-        raw_requirements = await self.observe(AICOEnvironment.MSG_RAW_REQUIREMENTS)
-        if not raw_requirements:
-            return
-            
-        # 3. 处理原始需求
-        raw_req = raw_requirements[-1]
-        try:
-            req_data = json.loads(raw_req)
-            if isinstance(req_data, dict) and "business_demand" in req_data:
-                parsed_req = req_data["business_demand"]
-                if isinstance(parsed_req, dict):
-                    business_req_text = ""
-                    for key, value in parsed_req.items():
-                        business_req_text += f"{key}: {value}\n"
-                    req_text = business_req_text
-                else:
-                    req_text = str(parsed_req)
-            else:
-                req_text = raw_req
-        except Exception:
-            req_text = raw_req
-            
-        # 4. 调用AI引擎分析需求
-        requirements_info = {
-            "requirements": req_text,
-            "tracking_file": "ReqTracking.xlsx"  # 可配置
-        }
+        # 从跟踪表获取待分析需求路径
+        tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
+        req_path = self._get_pending_requirement(tracking_file)
         
-        # 5. 生成需求矩阵
-        parse_action = self.get_action("parse_biz_requirement")
-        requirement_matrix = await parse_action.run(requirements_info)
-        # 6. 发布需求矩阵
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_MATRIX, requirement_matrix)
+        # 读取需求内容
+        content = (self.project_root / req_path).read_text(encoding="utf-8")
         
-        # 7. 更新业务架构和用户故事
-        update_action = self.get_action("update_4a_business")
-        analysis_result = await update_action.run(requirement_matrix)
-        # 8. 发布分析结果
-        await self.publish(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE, 
-                         analysis_result.get("business_architecture"))
+        # 执行分析...
+        analysis_result = await self._analyze_requirement(content)
+        
+        # 更新跟踪表状态
+        self._update_tracking_status(req_path, "ba_parsed_time")
+        
+        # 发布业务架构
+        await self.publish(AICOEnvironment.MSG_BUSINESS_ARCH, {
+            "req_id": req_path,
+            "architecture": analysis_result
+        })
+        
+        # 发布分析结果
         await self.publish(AICOEnvironment.MSG_USER_STORIES, 
-                         analysis_result.get("user_stories")) 
+                         analysis_result.get("user_stories"))
+        
+        # 发布分析完成通知
+        await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_DONE, {
+            "req_id": req_path.stem,
+            "output_files": [
+                str(arch_doc_path),
+                str(req_matrix_path)
+            ],
+            "status": "completed"
+        }) 
