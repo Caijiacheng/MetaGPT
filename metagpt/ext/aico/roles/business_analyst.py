@@ -68,12 +68,14 @@ class AICOBusinessAnalyst(AICOBaseRole):
         }
         
         # 5. 生成需求矩阵
-        requirement_matrix = await self.rc.todo[0].run(requirements_info)
+        parse_action = self.get_action("parse_biz_requirement")
+        requirement_matrix = await parse_action.run(requirements_info)
         # 6. 发布需求矩阵
         await self.publish(AICOEnvironment.MSG_REQUIREMENT_MATRIX, requirement_matrix)
         
         # 7. 更新业务架构和用户故事
-        analysis_result = await self.rc.todo[1].run(requirement_matrix)
+        update_action = self.get_action("update_4a_business")
+        analysis_result = await update_action.run(requirement_matrix)
         # 8. 发布分析结果
         await self.publish(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE, 
                          analysis_result.get("business_architecture"))

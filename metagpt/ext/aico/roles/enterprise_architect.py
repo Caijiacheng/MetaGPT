@@ -17,6 +17,9 @@ import json
 from .base_role import AICOBaseRole
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ea_action import ParseTechRequirements, Update4ATech
+from openpyxl import load_workbook
+from datetime import datetime
+from pathlib import Path
 
 class AICOEnterpriseArchitect(AICOBaseRole):
     """企业架构师角色"""
@@ -33,49 +36,52 @@ class AICOEnterpriseArchitect(AICOBaseRole):
         ]
         
     async def _act(self):
+        # 1. 等待业务架构完成
+        biz_arch = await self.observe(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE)
+        if not biz_arch:
+            self.logger.info("等待业务架构输入...")
+            return
+        
+        # 2. 获取技术需求
+        tech_req = await self.observe(AICOEnvironment.MSG_TECH_REQUIREMENT)
+        if not tech_req:
+            self.logger.info("未收到技术需求")
+            return
+        
+        # 3. 解析技术需求
         parse_action = self.get_action("parse_tech_requirements")
-        # 1. 观察是否有新的项目信息
-        project_info = await self.observe(AICOEnvironment.MSG_PROJECT_INFO)
-        if not project_info:
-            return
-            
-        # 2. 获取架构文档
-        arch_docs = await self.observe(AICOEnvironment.MSG_RAW_REQUIREMENTS)
-        if not arch_docs:
-            return
-            
-        # 3. 处理架构文档
-        arch_doc = arch_docs[-1]
-        try:
-            req_data = json.loads(arch_doc)
-            if isinstance(req_data, dict) and "technical_demand" in req_data:
-                tech_req = req_data["technical_demand"]
-                if isinstance(tech_req, dict):
-                    tech_req_text = ""
-                    for key, value in tech_req.items():
-                        tech_req_text += f"{key}: {value}\n"
-                    req_text = tech_req_text
-                else:
-                    req_text = str(tech_req)
-            else:
-                req_text = arch_doc
-        except Exception:
-            req_text = arch_doc
-            
-        # 4. 调用AI引擎分析需求
-        requirements_info = {
-            "requirements": req_text,
-            "tracking_file": "ReqTracking.xlsx"  # 可配置
-        }
+        req_matrix = await parse_action.run({
+            "requirements": tech_req[-1].content,
+            "business_arch": biz_arch[-1].content,
+            "tracking_file": "ReqTracking.xlsx"
+        })
         
-        # 5. 生成技术需求矩阵
-        requirement_matrix = await parse_action.run(requirements_info)
-        # 6. 发布需求矩阵
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_MATRIX, requirement_matrix)
-        
-        # 7. 更新4A架构
+        # 4. 更新4A架构
         update_action = self.get_action("update_4a_tech")
-        architecture_result = await update_action.run(requirement_matrix)
-        # 8. 发布架构设计
-        await self.publish(AICOEnvironment.MSG_4A_ASSESSMENT, 
-                         architecture_result.get("4a_architecture"))
+        arch_result = await update_action.run({
+            "requirement_matrix": req_matrix,
+            "business_arch": biz_arch[-1].content
+        })
+        
+        # 5. 发布架构设计
+        await self.publish(AICOEnvironment.MSG_4A_ASSESSMENT, arch_result)
+        
+        # 6. 更新需求跟踪状态
+        self._update_req_status(
+            req_matrix["tracking_file"], 
+            status="parsed_by_ea",
+            req_id=req_matrix["requirement_id"]
+        )
+
+    def _update_req_status(self, tracking_file: Path, status: str, req_id: str):
+        """更新需求跟踪表状态"""
+        wb = load_workbook(tracking_file)
+        ws = wb["需求管理"]
+        
+        for row in ws.iter_rows(min_row=2):
+            if row[0].value == req_id:  # 需求ID列
+                row[3].value = status  # 状态列
+                row[5].value = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # EA解析时间
+                break
+            
+        wb.save(tracking_file)

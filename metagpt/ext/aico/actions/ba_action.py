@@ -12,29 +12,29 @@
 """
 from typing import Dict
 from datetime import datetime
-from openpyxl import load_workbook
+from openpyxl import load_workbook, Workbook
 from metagpt.actions import Action
 import json
 from ..actions.base_action import AICOBaseAction
+from pathlib import Path
+from metagpt.ext.aico.services import SpecService
+
+# 新增常量
+ARCH_REFERENCE_PATH = Path("docs/aico/specs/EA-Design.md")
 
 PARSE_BIZ_REQUIREMENT_PROMPT = """
-你是一位业务分析师,请调用AI引擎对以下业务需求文本进行分析,输出业务需求矩阵,要求包含:
-{
-    "requirement_id": "REQ-XXX",
-    "type": "业务需求",
-    "title": "需求标题",
-    "description": "需求描述",
-    "priority": "高/中/低",
-    "status": "新建/分析中/已完成",
-    "stakeholders": ["相关干系人"],
-    "business_value": "业务价值说明",
-    "constraints": "约束条件",
-    "dependencies": ["依赖的其他需求ID"],
-    "created_time": "YYYY-MM-DD HH:mm:ss"
-}
+请按以下优先级应用规范：
+1️⃣ 项目专属规范（下方第二部分）
+2️⃣ 全局通用规范（下方第一部分）
 
-原始需求信息:
-{requirements}
+【全局规范】
+{global_spec}
+
+【项目规范】
+{project_spec}
+
+请根据以上规范处理需求：
+{raw_requirement}
 """
 
 UPDATE_4A_BUSINESS_PROMPT = """
@@ -77,65 +77,127 @@ class ParseBizRequirement(AICOBaseAction):
         required_fields = ["raw_requirement", "tracking_file"]
         return all(field in input_data for field in required_fields)
         
-    async def run(self, input_data: Dict) -> Dict:
-        if not await self.validate_input(input_data):
-            raise ValueError("缺少必要输入字段")
-            
-        # 调用AI引擎分析需求
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        # 初始化规范服务
+        spec_service = SpecService(input_data.get("project_root"))
+        
+        # 分别获取规范内容
+        global_spec = spec_service.get_global_spec("ea_design")
+        project_spec = spec_service.get_project_spec("ea_design")
+        
+        # 生成提示词时分别传递
         prompt = PARSE_BIZ_REQUIREMENT_PROMPT.format(
-            requirements=input_data["raw_requirement"]
+            global_spec=global_spec,
+            project_spec=project_spec,
+            raw_requirement=input_data["raw_requirement"]
         )
-        requirement_matrix = await self.llm.aask(prompt)
+        result = await self.llm.aask(prompt)
         
         # 写入需求跟踪表
-        tracking_file = input_data["tracking_file"]
-        if tracking_file:
+        tracking_file = Path(input_data["tracking_file"])
+        if tracking_file.exists():
             wb = load_workbook(tracking_file)
-            ws = wb["需求管理"]
-            
-            # 解析需求矩阵并写入Excel
-            matrix_data = json.loads(requirement_matrix)
-            row = [
-                matrix_data["requirement_id"],
-                matrix_data["title"],
-                matrix_data["description"],
-                "业务需求",  # 需求来源
-                matrix_data["priority"],
-                matrix_data["status"],
-                matrix_data["stakeholders"][0],  # 提出人取第一个干系人
-                matrix_data["created_time"],
-                "",  # 目标完成时间待定
-                matrix_data.get("acceptance_criteria", ""),
-                matrix_data.get("constraints", "")  # 约束作为备注
-            ]
-            ws.append(row)
-            wb.save(tracking_file)
-            
+            req_sheet = wb["需求管理"]
+        else:
+            wb = Workbook()
+            # 初始化所有Sheet
+            req_sheet = wb.active
+            req_sheet.title = "原始需求"
+            wb.create_sheet("需求管理")
+            wb.create_sheet("用户故事管理")
+            wb.create_sheet("任务跟踪")
+        
+        # 生成需求ID
+        req_id = f"REQ-{len(req_sheet.rows):03d}"
+        req_data = json.loads(result)
+        
+        # 写入需求管理表
+        req_sheet.append([
+            req_id,
+            input_data["raw_requirement"],  # 新增原始需求文件
+            req_data["business_architecture"]["processes"][0] + "需求",
+            req_data["business_architecture"]["processes"][0] + "流程需求",
+            "业务需求",
+            "高",
+            "待评审",
+            "BA系统",
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "",
+            "符合业务架构规范",
+            "自动生成"
+        ])
+        
+        # 更新原始需求表的关联
+        raw_sheet = wb["原始需求"]
+        for row in raw_sheet.iter_rows(min_row=2):
+            if row[0].value == input_data["raw_requirement"]:
+                row[4].value = req_id  # 第5列为关联需求ID
+                break
+                
+        # 更新原始需求状态
+        self._update_raw_req_status(
+            tracking_file=Path(input_data["tracking_file"]),
+            req_file=Path(input_data["raw_requirement"]),
+            status="parsed_by_ba",
+            role="BA",
+            req_id=req_id  # 传递生成的REQ-ID
+        )
+        
+        wb.save(tracking_file)
+        
         return {
-            "requirement_matrix": requirement_matrix,
-            "tracking_file": tracking_file
+            "requirement_id": req_id,
+            "business_architecture": req_data["business_architecture"],
+            "user_stories": req_data["user_stories"],
+            "tracking_file": str(tracking_file)
         }
 
-class Update4ABusiness(Action):
+class Update4ABusiness(AICOBaseAction):
     """调用AI引擎更新业务架构,生成用户故事"""
-    async def run(self, requirement_info: Dict) -> Dict:
-        # 调用AI引擎生成业务架构和用户故事
-        prompt = UPDATE_4A_BUSINESS_PROMPT.format(
-            requirement_matrix=requirement_info.get("requirement_matrix", "")
-        )
-        analysis_result = await self.llm.aask(prompt)
-        
-        # 写入用户故事到跟踪表
-        tracking_file = requirement_info.get("tracking_file")
-        if tracking_file:
-            wb = load_workbook(tracking_file)
-            ws = wb["用户故事"]
-            # 写入用户故事
-            # ws.append([...])  # 具体实现略
-            wb.save(tracking_file)
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        # 加载参考架构
+        with open(ARCH_REFERENCE_PATH, "r") as f:
+            arch_ref = f.read()
             
+        prompt = UPDATE_4A_BUSINESS_PROMPT.format(
+            arch_reference=arch_ref,
+            requirement_id=input_data["requirement_id"],
+            business_arch=input_data["business_architecture"]
+        )
+        result = await self.llm.aask(prompt)
+        analysis = json.loads(result)
+        
+        # 写入用户故事
+        tracking_file = Path(input_data["tracking_file"])
+        wb = load_workbook(tracking_file)
+        if "用户故事管理" not in wb.sheetnames:
+            wb.create_sheet("用户故事管理")
+            story_sheet = wb["用户故事管理"]
+            story_sheet.append([
+                "用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
+                "优先级", "状态", "验收标准", "创建时间", "备注"
+            ])
+        else:
+            story_sheet = wb["用户故事管理"]
+            
+        for idx, story in enumerate(analysis["user_stories"], 1):
+            story_id = f"US-{len(story_sheet.rows):03d}"
+            story_sheet.append([
+                story_id,
+                input_data["requirement_id"],
+                story["title"],
+                story["description"],
+                "高",  # 默认优先级
+                "待评审",  # 状态
+                "\n".join(story["acceptance_criteria"]),
+                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "自动生成"
+            ])
+            
+        wb.save(tracking_file)
+        
         return {
-            "business_architecture": analysis_result.get("business_architecture"),
-            "user_stories": analysis_result.get("user_stories"),
-            "tracking_file": tracking_file
+            "updated_architecture": analysis["business_architecture"],
+            "user_stories": analysis["user_stories"],
+            "tracking_file": str(tracking_file)
         } 

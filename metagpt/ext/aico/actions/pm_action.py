@@ -19,33 +19,36 @@ from openpyxl import Workbook, load_workbook
 import logging
 import shutil
 from metagpt.actions import Action
+import json
+from metagpt.ext.aico.services.spec_service import SpecService
 
-REVIEW_REQUIREMENTS_PROMPT = """
-你是一位项目经理,请调用AI引擎对以下业务需求和技术需求进行复核,输出JSON格式的复核结果:
-{
-    "review_result": {
-        "business_requirements": {
-            "completeness": "完整度评分(0-100)",
-            "clarity": "清晰度评分(0-100)",
-            "feasibility": "可行性评分(0-100)",
-            "issues": ["问题1", "问题2"],
-            "suggestions": ["建议1", "建议2"]
-        },
-        "technical_requirements": {
-            "completeness": "完整度评分(0-100)", 
-            "clarity": "清晰度评分(0-100)",
-            "feasibility": "可行性评分(0-100)",
-            "issues": ["问题1", "问题2"],
-            "suggestions": ["建议1", "建议2"]
-        },
-        "overall_assessment": "总体评估结论",
-        "review_time": "YYYY-MM-DD HH:mm:ss"
-    }
-}
+REVIEW_REQUIREMENTS_PROMPT = """作为资深项目经理，请根据以下材料进行需求复核：
 
-需求信息:
-{requirements}
-"""
+【原始需求】
+{raw_requirement}
+
+【已解析需求】
+{parsed_requirements}
+
+【关联文档】
+用户故事: {user_stories}
+业务架构: {business_arch}
+技术架构: {tech_arch}
+
+请检查：
+1. 存在的需求类型（业务/技术）是否解析完整
+2. 需求与架构设计是否一致
+3. 用户故事是否可追溯至需求（如存在业务需求）
+4. 是否存在矛盾或缺失
+
+输出格式：
+{{
+    "approved": true/false,
+    "missing_items": ["缺失项列表"],
+    "conflicts": ["矛盾点列表"],
+    "trace_issues": ["可追溯性问题"],
+    "suggestions": "改进建议"
+}}"""
 
 PLAN_SPRINT_PROMPT = """
 你是一位项目经理,请调用AI引擎基于以下需求制定迭代计划,输出JSON格式:
@@ -318,15 +321,79 @@ class PrepareProject(Action):
             }
         }
 
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        # 创建项目目录结构
+        project_root = Path(input_data["project_name"])
+        project_root.mkdir(exist_ok=True)
+        
+        # 创建项目规范模板
+        INIT_TEMPLATE = """# 项目专属规范模板
+
+## 接口规范
+- 必须包含请求/响应示例
+- 错误码需明确说明
+
+## 数据规范
+- 时间格式统一使用ISO 8601
+- 金额单位统一为人民币分
+
+## 其他要求
+请在此补充项目特有规范...
+"""
+        
+        project_spec_dir = project_root / "docs/specs"
+        project_spec_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 仅当不存在时创建
+        for spec_type in ["ea_design", "project_tracking"]:
+            spec_file = project_spec_dir / f"{spec_type}_spec.md"
+            if not spec_file.exists():
+                spec_file.write_text(INIT_TEMPLATE, encoding="utf-8")
+        
+        return {
+            "project_root": str(project_root),
+            "spec_dir": str(project_spec_dir)
+        }
+
 class ReviewAllRequirements(Action):
     """复核需求"""
-    async def run(self, requirements: Dict) -> Dict:
-        # 调用AI引擎复核需求
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        # 从输入数据中提取各类文档
+        raw_req = input_data.get("raw_requirement", "")
+        parsed_req = input_data.get("parsed_requirements", {})
+        user_stories = input_data.get("user_stories", "")
+        business_arch = input_data.get("business_arch", "")
+        tech_arch = input_data.get("tech_arch", "")
+        
         prompt = REVIEW_REQUIREMENTS_PROMPT.format(
-            requirements=requirements
+            raw_requirement=raw_req,
+            parsed_requirements=json.dumps(parsed_req, indent=2),
+            user_stories=user_stories,
+            business_arch=business_arch,
+            tech_arch=tech_arch
         )
-        review_result = await self.llm.aask(prompt)
-        return review_result
+        
+        result = await self.llm.aask(prompt)
+        return self._parse_result(result)
+        
+    def _parse_result(self, raw: str) -> Dict:
+        try:
+            data = json.loads(raw)
+            return {
+                "approved": data.get("approved", False),
+                "issues": {
+                    "missing": data.get("missing_items", []),
+                    "conflicts": data.get("conflicts", []),
+                    "traceability": data.get("trace_issues", [])
+                },
+                "suggestions": data.get("suggestions", "")
+            }
+        except Exception as e:
+            return {
+                "approved": False,
+                "issues": {"parse_error": [f"JSON解析失败: {str(e)}"]},
+                "suggestions": "请检查AI输出格式"
+            }
 
 class PlanSprintReleases(Action):
     """制定迭代计划"""

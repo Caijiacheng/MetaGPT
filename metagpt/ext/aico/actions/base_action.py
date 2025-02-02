@@ -1,6 +1,10 @@
 from datetime import datetime
 from metagpt.actions import Action
 from typing import Dict, Any
+from pathlib import Path
+import time
+import re
+from jsonschema import validate
 
 class AICOBaseAction(Action):
     """AICO Action基类，提供通用功能"""
@@ -20,6 +24,23 @@ class AICOBaseAction(Action):
             "timestamp": datetime.now().isoformat(),
             "version": "1.0"
         })
+        
+        # 使用JSON Schema校验输出结构
+        schema = {
+            "type": "object",
+            "properties": {
+                "application_architecture": {"type": "object"},
+                "technical_architecture": {"type": "object"},
+                "data_architecture": {"type": "object"}
+            },
+            "required": ["application_architecture", "technical_architecture"]
+        }
+        validate(instance=result, schema=schema)
+        
+        # 检查版本号格式
+        if not re.match(r"\d+\.\d+[a-z]?", result.get("version", "")):
+            raise ValueError("版本号不符合语义化规范")
+        
         return result
         
     async def run(self, *args, **kwargs):
@@ -41,3 +62,24 @@ class AICOBaseAction(Action):
         if args:
             return args[0] if isinstance(args[0], dict) else {}
         return kwargs 
+
+    def safe_save_workbook(self, wb, file_path: Path):
+        """安全保存Excel文件"""
+        try:
+            for attempt in range(3):
+                try:
+                    wb.save(file_path)
+                    break
+                except PermissionError:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.5)
+            # 增加备份机制
+            backup_path = file_path.with_name(f"backup_{file_path.name}")
+            if backup_path.exists():
+                backup_path.unlink()
+            file_path.rename(backup_path)
+            wb.save(file_path)
+        except Exception as e:
+            self.logger.error(f"保存文件失败: {str(e)}")
+            raise 

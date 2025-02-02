@@ -15,6 +15,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from metagpt.actions import Action
 import json
+from pathlib import Path
 
 PARSE_TECH_REQUIREMENT_PROMPT = """
 你是一位企业架构师,请调用AI引擎对以下架构文档进行分析,提取技术需求并输出需求矩阵,要求包含:
@@ -36,34 +37,22 @@ PARSE_TECH_REQUIREMENT_PROMPT = """
 {requirements}
 """
 
-UPDATE_4A_TECH_PROMPT = """
-你是一位企业架构师,请基于技术需求矩阵,调用AI引擎协助更新4A架构:
+UPDATE_4A_TECH_PROMPT = '''
+请严格遵循《技术架构设计规范》中的以下要求：
 
-{
-    "4a_architecture": {
-        "application_architecture": {
-            "overview": "应用架构概述",
-            "modules": ["功能模块列表"],
-            "interfaces": "接口设计",
-            "deployment": "部署策略"
-        },
-        "data_architecture": {
-            "data_model": "mermaid语法的ER图",
-            "data_flow": "数据流说明",
-            "data_governance": "数据治理策略"
-        },
-        "technical_architecture": {
-            "infrastructure": "基础设施",
-            "tech_stack": "技术栈选型",
-            "security": "安全架构",
-            "scalability": "扩展性设计"
-        }
-    }
-}
+【版本管理】
+{version_rule}
 
-技术需求矩阵:
-{requirement_matrix}
-"""
+【数据架构要求】
+{data_arch_rule}
+
+【技术选型规则】
+{tech_selection_rule}
+
+根据需求生成架构设计：
+'''
+
+ARCH_REFERENCE_PATH = Path("docs/aico/specs/EA-Design.md")
 
 class ParseTechRequirements(Action):
     """调用AI引擎分析技术需求,生成需求矩阵"""
@@ -106,9 +95,16 @@ class ParseTechRequirements(Action):
 class Update4ATech(Action):
     """调用AI引擎更新4A架构"""
     async def run(self, requirement_info: Dict) -> Dict:
-        # 调用AI引擎更新4A架构
+        # 加载技术架构参考
+        with open(ARCH_REFERENCE_PATH, "r", encoding="utf-8") as f:
+            tech_ref = "\n".join([
+                line for line in f.readlines() 
+                if "## 5. 技术架构（TA）" in line or line.startswith("### 5.")
+            ])
+            
         prompt = UPDATE_4A_TECH_PROMPT.format(
-            requirement_matrix=requirement_info.get("requirement_matrix", "")
+            tech_arch_ref=tech_ref,
+            requirement_matrix=json.dumps(requirement_info, indent=2)
         )
         architecture_result = await self.llm.aask(prompt)
         
@@ -124,4 +120,80 @@ class Update4ATech(Action):
         return {
             "4a_architecture": architecture_result.get("4a_architecture"),
             "tracking_file": tracking_file
-        } 
+        }
+
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        # 加载业务架构和技术需求
+        biz_arch = input_data["business_arch"]
+        tech_req = input_data["requirement_matrix"]
+        
+        # 生成架构提示词
+        prompt = f"""
+        根据以下业务架构和技术需求，更新4A技术架构：
+        
+        【业务架构】
+        {json.dumps(biz_arch, indent=2)}
+        
+        【技术需求】
+        {json.dumps(tech_req, indent=2)}
+        
+        输出要求：
+        1. 应用架构需支持业务架构中的{', '.join(biz_arch.get('processes', []))}流程
+        2. 数据架构需包含{biz_arch.get('data_entities', [])}实体
+        3. 技术架构需满足{tech_req.get('non_functional', '')}非功能需求
+        """
+        
+        # 调用AI生成架构
+        result = await self.llm.aask(prompt)
+        return self._parse_arch(result)
+        
+    def _parse_arch(self, raw: str) -> Dict:
+        try:
+            data = json.loads(raw)
+            # 强制字段检查
+            assert "application_architecture" in data
+            assert "services" in data["application_architecture"]
+            return data
+        except (json.JSONDecodeError, AssertionError) as e:
+            self.logger.error(f"架构解析失败: {str(e)}")
+            return self._generate_fallback_output()
+            
+    def _generate_fallback_output(self):
+        """生成符合规范的空结构"""
+        return {
+            "application_architecture": {"services": [], "interfaces": []},
+            "technical_architecture": {"deployment": "", "infrastructure": []},
+            "data_architecture": {"models": [], "data_flow": ""},
+            "security_architecture": {"access_control": ""}
+        }
+
+        # 写入任务跟踪表
+        tracking_file = Path(input_data["tracking_file"])
+        wb = load_workbook(tracking_file)
+        if "任务跟踪" not in wb.sheetnames:
+            task_sheet = wb.create_sheet("任务跟踪")
+            task_sheet.append([
+                "任务ID", "关联需求ID", "关联用户故事ID", "任务名称",
+                "任务描述", "任务类型", "负责人", "任务状态",
+                "计划开始时间", "计划结束时间", "实际开始时间", "实际结束时间", "备注"
+            ])
+        else:
+            task_sheet = wb["任务跟踪"]
+            
+        # 生成架构相关任务
+        task_sheet.append([
+            f"T-{len(task_sheet.rows):03d}",
+            input_data["requirement_id"],
+            "ARCH-DESIGN",  # 特殊标记架构设计任务
+            "4A架构设计评审",
+            "完成技术架构设计评审",
+            "架构设计",
+            "EA系统",
+            "已完成",
+            datetime.now().strftime("%Y-%m-%d"),
+            datetime.now().strftime("%Y-%m-%d"),
+            datetime.now().strftime("%Y-%m-%d"),
+            datetime.now().strftime("%Y-%m-%d"),
+            "关联架构文档：" + ARCH_REFERENCE_PATH.name
+        ])
+        wb.save(tracking_file) 
