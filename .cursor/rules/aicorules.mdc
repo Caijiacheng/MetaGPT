@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+---
+
+# Your rule content
+
+## Best Practices
+- 避免硬编码
+- 避免使用全局变量

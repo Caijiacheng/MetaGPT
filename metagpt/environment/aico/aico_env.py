@@ -9,7 +9,8 @@ import os
 import logging
 from pathlib import Path
 from typing import Dict, Optional, Any
-from metagpt/environment/base_env import Environment
+from metagpt.environment.base_env import Environment
+from metagpt.ext.aico.services.spec_service import SpecService
 
 
 class AICOEnvironment(Environment):
@@ -55,6 +56,20 @@ class AICOEnvironment(Environment):
         self.project_root.mkdir(parents=True, exist_ok=True)
         self.docs_root.mkdir(parents=True, exist_ok=True)
         self.tracking_root.mkdir(parents=True, exist_ok=True)
+        
+        # 从环境变量获取全局规范路径
+        global_spec_path = os.getenv("AICO_GLOBAL_SPEC_PATH", "docs/aico/specs")
+        global_spec_root = Path(global_spec_path)
+        
+        # 初始化规范服务（完全解耦路径管理）
+        self.spec_service = SpecService(
+            global_spec_root=global_spec_root,
+            project_root=self.project_root
+        )
+        
+        # 仅初始化项目规范模板（不执行同步）
+        for spec_type in ["ea_design", "project_tracking"]:
+            self.spec_service.init_project_spec(spec_type)
         
     def get_doc_path(self, doc_type: str) -> Path:
         """获取文档路径"""

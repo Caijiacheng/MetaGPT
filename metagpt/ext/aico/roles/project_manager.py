@@ -147,142 +147,153 @@ class AICOProjectManager(AICOBaseRole):
         return False
         
     async def _act(self) -> None:
-        """PM角色的行为逻辑"""
-        # 规范同步（使用新接口）
-        spec_service = SpecService(self.project_info["project_root"])
-        
-        # 同步所有注册的规范类型
-        sync_results = {}
-        for spec_type in SpecService.VALID_SPEC_TYPES:
-            sync_results[spec_type] = spec_service.sync_global_spec(spec_type)
-        
-        # 获取最新合并规范
-        current_specs = {
-            st: spec_service.get_spec(st) 
-            for st in SpecService.VALID_SPEC_TYPES
-        }
-        
-        # 更新到项目配置
-        self.project_info["specs"] = current_specs
-        
-        # 初始化时检查规范版本
-        ea_versions = spec_service.get_spec_version("ea_design")
-        
-        # 提示版本差异
-        if len(ea_versions) > 1:
-            self.logger.warning(f"检测到架构规范版本差异:\n" + "\n".join(
-                [f"{k}: {v}" for k, v in ea_versions.items()]
-            ))
-        
-        # 优先使用项目规范
-        current_spec = spec_service.get_spec("ea_design")
-        
-        # 修复：增加缺失的Sheet初始化
-        init_action = self.get_action("prepare_project")
-        await init_action.run({
-            "project_name": "AICO项目",
-            "tracking_file": "ProjectTracking.xlsx",
-            "sheets_config": {  # 新增配置
-                "原始需求": ["需求文件", "需求类型", "添加时间", "当前状态", "关联需求ID", 
-                          "BA解析时间", "EA解析时间", "完成时间", "备注"],
-                "需求管理": ["需求ID", "原始需求文件", "需求名称", "需求描述", "需求来源",
-                          "需求优先级", "需求状态", "提出人/负责人", "提出时间", "目标完成时间",
-                          "验收标准", "备注"],
-                "用户故事管理": ["用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
-                             "优先级", "状态", "验收标准", "创建时间", "备注"],
-                "任务跟踪": ["任务ID", "关联需求ID", "关联用户故事ID", "任务名称", "任务描述",
-                          "任务类型", "负责人", "任务状态", "计划开始时间", "计划结束时间",
-                          "实际开始时间", "实际结束时间", "备注"]
-            }
-        })
-        
-        # 任务跟踪时读取统一文件
-        tasks = await self.observe(AICOEnvironment.MSG_TASKS)
-        if tasks:
-            tracking_file = Path("ProjectTracking.xlsx")
-            wb = load_workbook(tracking_file)
-            task_sheet = wb["任务跟踪"]
-            # ...任务处理逻辑...
-        
-        # 通过self.get_action(name)获取具体Action
-        prepare_action = self.get_action("prepare_project")
-        project_config = await prepare_action.run(self.project_info)
-        
-        # 2. 处理当前需求
-        raw_req_file = Path(project_config["raw_requirement"])
-        req_tracking = project_config["req_tracking"]
-        
-        # 3. 更新需求状态为新建
-        self._update_raw_req_status(req_tracking, raw_req_file, "new")
-        
-        # 4. 发布项目信息
-        await self.publish(AICOEnvironment.MSG_PROJECT_INFO, project_config)
-        
-        # 5. 通知BA/EA处理需求(仅当需要解析时)
-        if self._check_req_needs_parsing(req_tracking, raw_req_file, "BA"):
-            await self.publish(AICOEnvironment.MSG_RAW_REQUIREMENTS, {
-                "file": str(raw_req_file),
-                "role": "BA",
-                "tracking_file": req_tracking
-            })
-            
-        if self._check_req_needs_parsing(req_tracking, raw_req_file, "EA"):
-            await self.publish(AICOEnvironment.MSG_RAW_REQUIREMENTS, {
-                "file": str(raw_req_file),
-                "role": "EA",
-                "tracking_file": req_tracking
-            })
-            
-        # 6. 收集所有需求解析结果
-        parsed_requirements = {
-            "business": await self._get_parsed_requirement(AICOEnvironment.MSG_BIZ_REQUIREMENT_MATRIX),
-            "technical": await self._get_parsed_requirement(AICOEnvironment.MSG_TECH_REQUIREMENT_MATRIX)
-        }
-        
-        # 7. 统一复核需求（无论是否存在业务/技术需求）
-        if any(parsed_requirements.values()):
-            review_action = self.get_action("review_requirements")
-            review_result = await review_action.run({
-                "raw_requirement": raw_req_file,  # 从文件读取的原始内容
-                "parsed_requirements": parsed_requirements,
-                "user_stories": self._get_latest_msg_content(AICOEnvironment.MSG_USER_STORIES),
-                "business_arch": self._get_latest_msg_content(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE),
-                "tech_arch": self._get_latest_msg_content(AICOEnvironment.MSG_4A_ASSESSMENT)
-            })
-            
-            if not review_result.get("approved"):
-                await self._handle_review_failure(review_result)
-                return
-            
-            # 8. 更新需求状态
-            if parsed_requirements["business"]:
-                self._update_raw_req_status(req_tracking, raw_req_file, "parsed_by_ba", "BA")
-            if parsed_requirements["technical"]:
-                self._update_raw_req_status(req_tracking, raw_req_file, "parsed_by_ea", "EA")
-            
-            # 9. 进入设计阶段（根据实际存在的需求类型）
-            await self._start_design_phase(parsed_requirements)
-        
-        # 11. 等待并复核设计文档
-        designs = await self.observe(AICOEnvironment.MSG_4A_ASSESSMENT)
-        if designs:
-            design_review_action = self.get_action("review_designs")
-            design_review = await design_review_action.run(designs[-1])
-            await self.publish(AICOEnvironment.MSG_DESIGN_REVIEW, design_review)
-        
-        # 12. 等待并复核任务
-        tasks = await self.observe(AICOEnvironment.MSG_TASKS)
-        if tasks:
-            task_review_action = self.get_action("review_tasks")
-            task_review = await task_review_action.run(tasks[-1])
-            await self.publish(AICOEnvironment.MSG_TASK_REVIEW, task_review)
+        # 1. _init_project()，初始化项目。 @参考：docs/README_AICO_CN_1.2.md
+        ## 1.1 初始化整个AICO项目
+        ##   a. 如果项目不存在则新建，如果项目存在则更新
+        ##   b. 新建动作，需要初始化整个AICO项目，包括初始化项目规范、创建跟踪文件、创建基础的design等目录，
+        ##   c. spec规范相关的动作统一由@spec_service.init_project_spec()来完成
+        ##   d. project规范相关的动作统一由
+        ## 1.2 返回项目配置信息，返回项目配置信息，包括项目名称、项目根目录、跟踪文件、设计文件、任务文件等
+        # 2. _
 
-        # 检查规范版本
-        project_spec = Path(self.project_info["spec_dir"]) / "EA-Design.md"
-        global_spec = Path("docs/aico/specs/EA-Design.md")
+
+        pass
+        # """PM角色的行为逻辑"""
+        # # 规范同步（使用新接口）
+        # spec_service = SpecService(self.project_info["project_root"])
         
-        if project_spec.stat().st_mtime < global_spec.stat().st_mtime:
-            self.logger.warning(f"项目规范 {project_spec} 版本较旧，建议更新")
+        # # 同步所有注册的规范类型
+        # sync_results = {}
+        # for spec_type in SpecService.VALID_SPEC_TYPES:
+        #     sync_results[spec_type] = spec_service.sync_global_spec(spec_type)
+        
+        # # 获取最新合并规范
+        # current_specs = {
+        #     st: spec_service.get_spec(st) 
+        #     for st in SpecService.VALID_SPEC_TYPES
+        # }
+        
+        # # 更新到项目配置
+        # self.project_info["specs"] = current_specs
+        
+        # # 初始化时检查规范版本
+        # ea_versions = spec_service.get_spec_version("ea_design")
+        
+        # # 提示版本差异
+        # if len(ea_versions) > 1:
+        #     self.logger.warning(f"检测到架构规范版本差异:\n" + "\n".join(
+        #         [f"{k}: {v}" for k, v in ea_versions.items()]
+        #     ))
+        
+        # # 优先使用项目规范
+        # current_spec = spec_service.get_spec("ea_design")
+        
+        # # 修复：增加缺失的Sheet初始化
+        # init_action = self.get_action("prepare_project")
+        # await init_action.run({
+        #     "project_name": "AICO项目",
+        #     "tracking_file": "ProjectTracking.xlsx",
+        #     "sheets_config": {  # 新增配置
+        #         "原始需求": ["需求文件", "需求类型", "添加时间", "当前状态", "关联需求ID", 
+        #                   "BA解析时间", "EA解析时间", "完成时间", "备注"],
+        #         "需求管理": ["需求ID", "原始需求文件", "需求名称", "需求描述", "需求来源",
+        #                   "需求优先级", "需求状态", "提出人/负责人", "提出时间", "目标完成时间",
+        #                   "验收标准", "备注"],
+        #         "用户故事管理": ["用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
+        #                      "优先级", "状态", "验收标准", "创建时间", "备注"],
+        #         "任务跟踪": ["任务ID", "关联需求ID", "关联用户故事ID", "任务名称", "任务描述",
+        #                   "任务类型", "负责人", "任务状态", "计划开始时间", "计划结束时间",
+        #                   "实际开始时间", "实际结束时间", "备注"]
+        #     }
+        # })
+        
+        # # 任务跟踪时读取统一文件
+        # tasks = await self.observe(AICOEnvironment.MSG_TASKS)
+        # if tasks:
+        #     tracking_file = Path("ProjectTracking.xlsx")
+        #     wb = load_workbook(tracking_file)
+        #     task_sheet = wb["任务跟踪"]
+        #     # ...任务处理逻辑...
+        
+        # # 通过self.get_action(name)获取具体Action
+        # prepare_action = self.get_action("prepare_project")
+        # project_config = await prepare_action.run(self.project_info)
+        
+        # # 2. 处理当前需求
+        # raw_req_file = Path(project_config["raw_requirement"])
+        # req_tracking = project_config["req_tracking"]
+        
+        # # 3. 更新需求状态为新建
+        # self._update_raw_req_status(req_tracking, raw_req_file, "new")
+        
+        # # 4. 发布项目信息
+        # await self.publish(AICOEnvironment.MSG_PROJECT_INFO, project_config)
+        
+        # # 5. 通知BA/EA处理需求(仅当需要解析时)
+        # if self._check_req_needs_parsing(req_tracking, raw_req_file, "BA"):
+        #     await self.publish(AICOEnvironment.MSG_RAW_REQUIREMENTS, {
+        #         "file": str(raw_req_file),
+        #         "role": "BA",
+        #         "tracking_file": req_tracking
+        #     })
+            
+        # if self._check_req_needs_parsing(req_tracking, raw_req_file, "EA"):
+        #     await self.publish(AICOEnvironment.MSG_RAW_REQUIREMENTS, {
+        #         "file": str(raw_req_file),
+        #         "role": "EA",
+        #         "tracking_file": req_tracking
+        #     })
+            
+        # # 6. 收集所有需求解析结果
+        # parsed_requirements = {
+        #     "business": await self._get_parsed_requirement(AICOEnvironment.MSG_BIZ_REQUIREMENT_MATRIX),
+        #     "technical": await self._get_parsed_requirement(AICOEnvironment.MSG_TECH_REQUIREMENT_MATRIX)
+        # }
+        
+        # # 7. 统一复核需求（无论是否存在业务/技术需求）
+        # if any(parsed_requirements.values()):
+        #     review_action = self.get_action("review_requirements")
+        #     review_result = await review_action.run({
+        #         "raw_requirement": raw_req_file,  # 从文件读取的原始内容
+        #         "parsed_requirements": parsed_requirements,
+        #         "user_stories": self._get_latest_msg_content(AICOEnvironment.MSG_USER_STORIES),
+        #         "business_arch": self._get_latest_msg_content(AICOEnvironment.MSG_BUSINESS_ARCHITECTURE),
+        #         "tech_arch": self._get_latest_msg_content(AICOEnvironment.MSG_4A_ASSESSMENT)
+        #     })
+            
+        #     if not review_result.get("approved"):
+        #         await self._handle_review_failure(review_result)
+        #         return
+            
+        #     # 8. 更新需求状态
+        #     if parsed_requirements["business"]:
+        #         self._update_raw_req_status(req_tracking, raw_req_file, "parsed_by_ba", "BA")
+        #     if parsed_requirements["technical"]:
+        #         self._update_raw_req_status(req_tracking, raw_req_file, "parsed_by_ea", "EA")
+            
+        #     # 9. 进入设计阶段（根据实际存在的需求类型）
+        #     await self._start_design_phase(parsed_requirements)
+        
+        # # 11. 等待并复核设计文档
+        # designs = await self.observe(AICOEnvironment.MSG_4A_ASSESSMENT)
+        # if designs:
+        #     design_review_action = self.get_action("review_designs")
+        #     design_review = await design_review_action.run(designs[-1])
+        #     await self.publish(AICOEnvironment.MSG_DESIGN_REVIEW, design_review)
+        
+        # # 12. 等待并复核任务
+        # tasks = await self.observe(AICOEnvironment.MSG_TASKS)
+        # if tasks:
+        #     task_review_action = self.get_action("review_tasks")
+        #     task_review = await task_review_action.run(tasks[-1])
+        #     await self.publish(AICOEnvironment.MSG_TASK_REVIEW, task_review)
+
+        # # 检查规范版本
+        # project_spec = Path(self.project_info["spec_dir"]) / "EA-Design.md"
+        # global_spec = Path("docs/aico/specs/EA-Design.md")
+        
+        # if project_spec.stat().st_mtime < global_spec.stat().st_mtime:
+        #     self.logger.warning(f"项目规范 {project_spec} 版本较旧，建议更新")
 
     async def _handle_review_failure(self, review_result: Dict):
         """处理复核不通过的情况"""

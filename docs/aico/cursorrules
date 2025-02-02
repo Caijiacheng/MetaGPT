@@ -1,0 +1,5 @@
+# Project: AICO-META
+
+## Best Practices
+- 避免硬编码
+- 避免使用全局变量

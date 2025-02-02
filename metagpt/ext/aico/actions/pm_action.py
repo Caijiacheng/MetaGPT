@@ -21,6 +21,7 @@ import shutil
 from metagpt.actions import Action
 import json
 from metagpt.ext.aico.services.spec_service import SpecService
+import os
 
 REVIEW_REQUIREMENTS_PROMPT = """作为资深项目经理，请根据以下材料进行需求复核：
 
@@ -120,151 +121,35 @@ REVIEW_TASKS_PROMPT = """
 {tasks}
 """
 
-class PrepareProject(Action):
+class ParseSpecStructure(AICOBaseAction):
+    """解析规范文档结构"""
+    
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        spec_service = SpecService(input_data.get("project_root"))
+        spec_content = spec_service.get_global_spec("project_tracking")
+        
+        prompt = f"""
+        请从以下规范文档中解析出Excel跟踪表的结构要求：
+        {spec_content}
+        
+        输出JSON格式：
+        {{
+            "sheets": {{
+                "表名": ["字段1", "字段2..."]
+            }},
+            "file_naming": "文件命名规则说明",
+            "path_rules": "路径存储规则"
+        }}
+        """
+        result = await self.llm.aask(prompt)
+        return json.loads(result)
+
+class PrepareProject(AICOBaseAction):
     """初始化项目"""
     def __init__(self):
         super().__init__()
-        # 从规范文档加载表格结构定义
-        self.REQUIRED_SHEETS = {
-            "需求跟踪": {
-                "原始需求": [  # 新增原始需求跟踪表
-                    "需求文件", "需求类型", "添加时间", "当前状态",
-                    "BA解析时间", "EA解析时间", "完成时间", "备注"
-                ],
-                "需求管理": [
-                    "需求ID", "需求名称", "需求描述", "需求来源", 
-                    "需求优先级", "需求状态", "提出人", "提出时间",
-                    "目标完成时间", "验收标准", "备注"
-                ],
-                "用户故事管理": [
-                    "用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
-                    "优先级", "状态", "验收标准", "创建时间", "备注"
-                ]
-            },
-            "任务跟踪": {
-                "任务跟踪": [
-                    "任务ID", "关联需求ID", "关联用户故事ID", "任务名称", 
-                    "任务描述", "任务类型", "负责人", "任务状态",
-                    "计划开始时间", "计划结束时间", "实际开始时间", 
-                    "实际结束时间", "备注"
-                ]
-            }
-        }
-    
-    def _init_project_dirs(self, project_root: Path) -> Dict[str, Path]:
-        """初始化项目目录结构"""
-        # 创建主目录
-        project_root.mkdir(parents=True, exist_ok=True)
-        
-        # 创建标准目录结构
-        dirs = {
-            "raw_requirements": project_root / "raw_requirements",  # 原始需求目录
-            "docs": {
-                "root": project_root / "docs",  # 文档根目录
-                "specs": project_root / "docs" / "specs",  # 规范文档目录
-                "requirements": project_root / "docs" / "requirements",  # 需求文档目录
-                "designs": project_root / "docs" / "designs",  # 设计文档目录
-                "reports": project_root / "docs" / "reports"  # 报告文档目录
-            },
-            "tracking": project_root / "tracking",  # 跟踪文件目录
-            "output": project_root / "output"  # 输出目录
-        }
-        
-        # 创建目录
-        for dir_path in [dirs["raw_requirements"], dirs["tracking"], dirs["output"]]:
-            dir_path.mkdir(exist_ok=True)
-            
-        # 创建文档目录结构
-        for doc_dir in dirs["docs"].values():
-            doc_dir.mkdir(parents=True, exist_ok=True)
-            
-        return dirs
-    
-    def _copy_spec_files(self, spec_dir: Path):
-        """复制规范文档到项目目录"""
-        # 复制需求和任务跟踪规范
-        src_req_spec = Path("docs/aico/norm/Req&Task-Tracking.md")
-        if src_req_spec.exists():
-            shutil.copy2(src_req_spec, spec_dir / "Req&Task-Tracking.md")
-            
-        # 复制其他规范文档
-        # ...
-    
-    def _save_raw_requirement(self, 
-                            raw_req: str, 
-                            raw_req_dir: Path,
-                            is_file: bool = False,
-                            iteration: int = 1) -> Path:
-        """保存原始需求
-        
-        Args:
-            raw_req: 原始需求内容或文件路径
-            raw_req_dir: 原始需求目录
-            is_file: 是否是文件
-            iteration: 迭代次数
-        """
-        if is_file:
-            # 如果是文件路径,复制到原始需求目录
-            src_path = Path(raw_req)
-            # 添加迭代号到文件名
-            dst_path = raw_req_dir / f"iter{iteration}_{src_path.name}"
-            shutil.copy2(src_path, dst_path)
-        else:
-            # 如果是文本,创建新文件保存
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dst_path = raw_req_dir / f"iter{iteration}_requirement_{timestamp}.txt"
-            with open(dst_path, "w", encoding="utf-8") as f:
-                f.write(raw_req)
-                
-        return dst_path
-    
-    def _create_or_update_tracking_files(self, tracking_dir: Path) -> Dict[str, Path]:
-        """创建或更新跟踪文件"""
-        tracking_files = {}
-        
-        # 处理需求跟踪表
-        req_tracking = tracking_dir / "ReqTracking.xlsx"
-        if req_tracking.exists():
-            # 如果文件存在,加载现有文件
-            wb_req = load_workbook(req_tracking)
-            # 检查并添加缺失的sheet
-            for sheet_name, headers in self.REQUIRED_SHEETS["需求跟踪"].items():
-                if sheet_name not in wb_req.sheetnames:
-                    ws = wb_req.create_sheet(sheet_name)
-                    ws.append(headers)
-        else:
-            # 创建新文件
-            wb_req = Workbook()
-            for sheet_name, headers in self.REQUIRED_SHEETS["需求跟踪"].items():
-                if sheet_name == "需求管理":
-                    ws = wb_req.active
-                    ws.title = sheet_name
-                else:
-                    ws = wb_req.create_sheet(sheet_name)
-                ws.append(headers)
-        wb_req.save(req_tracking)
-        tracking_files["req_tracking"] = req_tracking
-        
-        # 处理任务跟踪表
-        task_tracking = tracking_dir / "TaskTracking.xlsx"
-        if task_tracking.exists():
-            # 如果文件存在,加载现有文件
-            wb_task = load_workbook(task_tracking)
-            # 检查并添加缺失的sheet
-            if "任务跟踪" not in wb_task.sheetnames:
-                ws = wb_task.create_sheet("任务跟踪")
-                ws.append(self.REQUIRED_SHEETS["任务跟踪"]["任务跟踪"])
-        else:
-            # 创建新文件
-            wb_task = Workbook()
-            ws = wb_task.active
-            ws.title = "任务跟踪"
-            ws.append(self.REQUIRED_SHEETS["任务跟踪"]["任务跟踪"])
-        wb_task.save(task_tracking)
-        tracking_files["task_tracking"] = task_tracking
-        
-        return tracking_files
-        
+
+
     async def run(self, project_info: Dict) -> Dict:
         """初始化或更新项目
         
@@ -275,85 +160,39 @@ class PrepareProject(Action):
                 - raw_requirement: 原始需求(文件路径或文本)
                 - iteration: 当前迭代次数(默认为1)
         """
-        # 1. 确定项目根目录
-        project_root = Path(project_info["output_root"]) / project_info["name"]
-        
-        # 2. 初始化/确认目录结构
-        dirs = self._init_project_dirs(project_root)
-        
-        # 3. 复制规范文档(首次初始化时)
-        if not (dirs["docs"]["specs"] / "Req&Task-Tracking.md").exists():
-            self._copy_spec_files(dirs["docs"]["specs"])
-        
-        # 4. 保存原始需求(带迭代号)
-        raw_req = project_info["raw_requirement"]
-        iteration = project_info.get("iteration", 1)
-        try:
-            # 尝试作为文件路径处理
-            Path(raw_req).resolve(strict=True)
-            is_file = True
-        except:
-            is_file = False
-        
-        req_file = self._save_raw_requirement(
-            raw_req,
-            dirs["raw_requirements"],
-            is_file,
-            iteration
-        )
-        
-        # 5. 创建或更新跟踪文件
-        tracking_files = self._create_or_update_tracking_files(dirs["tracking"])
-        
-        # 6. 返回项目配置信息
-        return {
-            "project_name": project_info["name"],
-            "project_root": str(project_root),
-            "raw_requirement": str(req_file),
-            "req_tracking": str(tracking_files["req_tracking"]),
-            "task_tracking": str(tracking_files["task_tracking"]),
-            "iteration": iteration,
-            "directories": {
-                "raw_requirements": str(dirs["raw_requirements"]),
-                "docs": {k: str(v) for k, v in dirs["docs"].items()},
-                "tracking": str(dirs["tracking"]),
-                "output": str(dirs["output"])
-            }
-        }
+        # 
+        pass
 
     async def _run_impl(self, input_data: Dict) -> Dict:
-        # 创建项目目录结构
-        project_root = Path(input_data["project_name"])
-        project_root.mkdir(exist_ok=True)
+        # 初始化规范服务
+        spec_service = SpecService(input_data["project_root"])
         
-        # 创建项目规范模板
-        INIT_TEMPLATE = """# 项目专属规范模板
-
-## 接口规范
-- 必须包含请求/响应示例
-- 错误码需明确说明
-
-## 数据规范
-- 时间格式统一使用ISO 8601
-- 金额单位统一为人民币分
-
-## 其他要求
-请在此补充项目特有规范...
-"""
+        # 1. 解析规范结构
+        parse_action = self.get_action("parse_spec_structure")
+        spec_structure = await parse_action.run({
+            "project_root": input_data["project_root"]
+        })
         
-        project_spec_dir = project_root / "docs/specs"
-        project_spec_dir.mkdir(parents=True, exist_ok=True)
+        # 2. 创建跟踪文件
+        tracking_file = Path(os.getenv("TRACKING_FILE", "tracking/ReqTracking.xlsx"))
+        self._create_tracking_file(tracking_file, spec_structure["sheets"])
         
-        # 仅当不存在时创建
+        # 3. 初始化项目规范
         for spec_type in ["ea_design", "project_tracking"]:
-            spec_file = project_spec_dir / f"{spec_type}_spec.md"
-            if not spec_file.exists():
-                spec_file.write_text(INIT_TEMPLATE, encoding="utf-8")
-        
+            spec_service.init_project_spec(spec_type)
+            
         return {
-            "project_root": str(project_root),
-            "spec_dir": str(project_spec_dir)
+            "project_root": input_data["project_root"],
+            "tracking_file": str(tracking_file),
+            "spec_structure": spec_structure
         }
+
+    def _create_tracking_file(self, file_path: Path, sheets_config: Dict):
+        wb = Workbook()
+        for sheet_name, headers in sheets_config.items():
+            ws = wb.create_sheet(sheet_name)
+            ws.append(headers)
+        wb.save(file_path)
 
 class ReviewAllRequirements(Action):
     """复核需求"""
