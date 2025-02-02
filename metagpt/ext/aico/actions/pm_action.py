@@ -144,95 +144,81 @@ class ParseSpecStructure(AICOBaseAction):
         result = await self.llm.aask(prompt)
         return json.loads(result)
 
-class PrepareProject(AICOBaseAction):
-    """初始化项目"""
-    def __init__(self):
-        super().__init__()
+class PrepareProject(Action):
+    """初始化AICO项目结构
+    TODO: 需要补充SpecService具体实现
+    生成目录结构：
+    ├── docs/
+    │   ├── aico/specs/          # 规范文档
+    │   ├── ea/                 # 4A架构文档
+    │   └── requirements/       # 需求文档
+    ├── tracking/
+    │   └── ProjectTracking.xlsx # 项目跟踪表
+    ├── src/                    # 源代码
+    └── config/                 # 配置文件
+    """
+    
+    async def run(self, project_root: str) -> Dict:
+        """创建基础项目结构"""
+        project_path = Path(project_root)
+        dirs = [
+            "docs/aico/specs",
+            "docs/ea",
+            "docs/requirements",
+            "tracking",
+            "src",
+            "config"
+        ]
+        for d in dirs:
+            (project_path / d).mkdir(parents=True, exist_ok=True)
 
-
-    async def run(self, project_info: Dict) -> Dict:
-        """初始化或更新项目
+        # 初始化跟踪文件（根据project_tracking_spec.md规范）
+        tracking_file = project_path / "tracking/ProjectTracking.xlsx"
+        wb = Workbook()
+        sheets = {
+            "原始需求": ["需求文件", "需求类型", "添加时间", "当前状态", "关联需求ID",
+                      "BA解析时间", "EA解析时间", "完成时间", "备注"],
+            "需求管理": ["需求ID", "原始需求文件", "需求名称", "需求描述", "需求来源",
+                      "需求优先级", "需求状态", "提出人/负责人", "提出时间", "目标完成时间",
+                      "验收标准", "备注"],
+            "用户故事管理": ["用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
+                         "优先级", "状态", "验收标准", "创建时间", "备注"],
+            "任务跟踪": ["任务ID", "关联需求ID", "关联用户故事ID", "任务名称", "任务描述",
+                      "任务类型", "负责人", "任务状态", "计划开始时间", "计划结束时间",
+                      "实际开始时间", "实际结束时间", "备注"]
+        }
         
-        Args:
-            project_info: 项目信息
-                - name: 项目名称
-                - output_root: 输出根目录
-                - raw_requirement: 原始需求(文件路径或文本)
-                - iteration: 当前迭代次数(默认为1)
-        """
-        # 
-        pass
-
-    async def _run_impl(self, input_data: Dict) -> Dict:
-        # 初始化规范服务
-        spec_service = SpecService(input_data["project_root"])
+        for sheet_name, headers in sheets.items():
+            wb.create_sheet(sheet_name)
+            wb[sheet_name].append(headers)
         
-        # 1. 解析规范结构
-        parse_action = self.get_action("parse_spec_structure")
-        spec_structure = await parse_action.run({
-            "project_root": input_data["project_root"]
-        })
+        wb.save(tracking_file)
         
-        # 2. 创建跟踪文件
-        tracking_file = Path(os.getenv("TRACKING_FILE", "tracking/ReqTracking.xlsx"))
-        self._create_tracking_file(tracking_file, spec_structure["sheets"])
-        
-        # 3. 初始化项目规范
-        for spec_type in ["ea_design", "project_tracking"]:
-            spec_service.init_project_spec(spec_type)
-            
         return {
-            "project_root": input_data["project_root"],
+            "project_root": str(project_root),
             "tracking_file": str(tracking_file),
-            "spec_structure": spec_structure
+            "specs": ["ea_design", "project_tracking"]  # TODO: 需要接入SpecService
         }
 
-    def _create_tracking_file(self, file_path: Path, sheets_config: Dict):
-        wb = Workbook()
-        for sheet_name, headers in sheets_config.items():
-            ws = wb.create_sheet(sheet_name)
-            ws.append(headers)
-        wb.save(file_path)
-
 class ReviewAllRequirements(Action):
-    """复核需求"""
-    async def _run_impl(self, input_data: Dict) -> Dict:
-        # 从输入数据中提取各类文档
-        raw_req = input_data.get("raw_requirement", "")
-        parsed_req = input_data.get("parsed_requirements", {})
-        user_stories = input_data.get("user_stories", "")
-        business_arch = input_data.get("business_arch", "")
-        tech_arch = input_data.get("tech_arch", "")
-        
-        prompt = REVIEW_REQUIREMENTS_PROMPT.format(
-            raw_requirement=raw_req,
-            parsed_requirements=json.dumps(parsed_req, indent=2),
-            user_stories=user_stories,
-            business_arch=business_arch,
-            tech_arch=tech_arch
+    """复核所有已分析需求（根据文档6.1.3节）"""
+    
+    async def run(self, requirements: dict):
+        # 实现需求一致性检查逻辑
+        # 返回结构示例:
+        # {
+        #   "consistency": True,
+        #   "conflicts": [],
+        #   "suggestions": "需求基线已就绪"
+        # }
+        return ActionOutput(
+            instruct_content=await self._check_consistency(requirements),
+            content=requirements
         )
-        
-        result = await self.llm.aask(prompt)
-        return self._parse_result(result)
-        
-    def _parse_result(self, raw: str) -> Dict:
-        try:
-            data = json.loads(raw)
-            return {
-                "approved": data.get("approved", False),
-                "issues": {
-                    "missing": data.get("missing_items", []),
-                    "conflicts": data.get("conflicts", []),
-                    "traceability": data.get("trace_issues", [])
-                },
-                "suggestions": data.get("suggestions", "")
-            }
-        except Exception as e:
-            return {
-                "approved": False,
-                "issues": {"parse_error": [f"JSON解析失败: {str(e)}"]},
-                "suggestions": "请检查AI输出格式"
-            }
+    
+    async def _check_consistency(self, reqs: dict) -> dict:
+        # 实现具体的检查逻辑...
+        pass
 
 class PlanSprintReleases(Action):
     """制定迭代计划"""

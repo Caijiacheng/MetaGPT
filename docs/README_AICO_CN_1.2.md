@@ -56,20 +56,27 @@ AICO-Meta 的落地一般分为三个阶段，便于在不同企业环境中循�
 
 典型的需求实现流程如下：
 
-1. **需求跟踪 (Requirement Tracking)**
-   - BA、EA 分别负责记录业务需求与技术需求，全部命名为 requirement 并写入 ReqTracking.xlsx。
-2. **用户故事 (User Stories)**
-   - BA/PDM 将业务需求拆解为用户故事 (Story)；EA 若有技术需求，也可转化为技术故事或技术任务。
-3. **任务拆解 (Task Decomposition)**
-   - PM 根据用户故事拆解为更小的开发/测试/部署任务，放在 TaskTracking.xlsx 中，分配给相应角色。
+1. **原始需求跟踪**
+   - PM 统一管理 ProjectTasking.xlsx 的「原始需求」Sheet，记录所有原始材料
+   - BA/EA 完成解析后向 PM 反馈状态（parsed_by_ba/parsed_by_ea）
+   
+2. **需求管理**
+   - PM 根据 BA/EA 的解析结果更新「需求管理」Sheet
+   - 执行`ReviewAllRequirements()`完成需求基线
+
+3. **用户故事管理**
+   - PM 根据 PDM/BA 的拆解结果维护「用户故事管理」Sheet
+   - 用户故事状态通过任务完成情况自动更新
+
+4. **任务跟踪**
+   - PM 通过`assignTasks()`发布开发/测试/部署任务
+   - 各角色完成任务后向 PM 反馈状态（通过publish机制）
 
 对大型项目，可进一步扩展到 EPIC → Feature → Story → Task → Subtask 等多层结构。
 
 ---
 
-## 5. 详细时序与信息流 (P0 阶段)
-
-在 **P0** 阶段，完整流程分为四个核心阶段，形成"AI生成+人工复核"的双重校验机制：
+## 5. 详细时序与信息流 (P0 阶段更新版)
 
 ```mermaid
 sequenceDiagram
@@ -82,89 +89,104 @@ sequenceDiagram
     participant DO as DevOps 工程师 (DO)
     participant ENV as <环境>ENV
     participant AI as <引擎>AI
-    participant SpecService
+
 
     note over PM: 【项目启动】(P0)
 
-    PM->>PM: initProject()，初始化项目工程，如果项目已经存在，则更新项目工程
-    PM->>ENV: publish {project:ready}
+    PM->>PM: initProject()
+    PM->>ENV: publish(project:ready)
     
    rect rgb(191, 250, 253)
-   note over PM,AI: 【需求收集】
-    PM->>BA: 收集业务原始需求(可以是访谈材料、视频、录音等等）
-    BA->>AI: parseBizRequirement()，调用AI引擎，协助分析成业务需求矩阵
-    AI-->>BA: 输出业务需求矩阵
-    BA->>AI: update4ABusiness()，调用AI引擎，协助更新业务架构和用户故事
+   note over PM,AI: 【需求收集和分析跟踪】
+    PM->>BA: publish(requirment:bizParse)，提交原始需求分析
+    BA->>AI: parseBizRequirement()
+    AI-->>BA: LLM输出解析结果
+    BA->>AI: update4ABiz()，调用AI引擎，协助更新业务架构和用户故事
     AI-->>BA: 输出业务架构和用户故事
-    BA->>ENV: publish {requirement: business}
+    BA-->>PM: publish(requirment:bizParseDone)，需求解析结束
+  
+    PM->>PM: updateProjectTacking()，更新「需求管理」状态
 
 
-    PM->>EA: 收集技术需求(可以是访谈材料、视频、录音等等）
-    EA->>AI: parseTechRequirements()，调用AI引擎，协助分析成技术需求矩阵
-    AI-->>EA: 输出技术需求矩阵
+    PM->>EA: publish(requirment:techParse)，提交原始需求分析
+    EA->>AI: parseTechRequirements() 
+    AI-->>EA: LLM输出解析结果
     EA->>AI: update4ATech()，调用AI引擎，协助更新技术架构（需要结合业务架构）
     AI-->>EA: 输出4A架构中的应用架构、数据架构、技术架构
-    EA->>ENV: publish {requirement: tech}
+    EA-->>PM: publish(requirment:techParseDone)，需求解析结束
+    PM->>PM: updateProjectTacking()，更新「需求管理」状态
 
-    PM-->>AI: ReviewAllRequirements()，人工复核修正 + 文档AI一致性检查
+    PM->>AI: ReviewAllRequirements()，人工复核修正 + 文档AI一致性检查
     AI-->>PM: 输出一致性结果
-    note over PM: 需求收集结束，形成需求文档基线
+    PM->>PM: updateProjectTacking()，更新「需求管理」状态
+    note over PM: 需求收集&分析结束，形成需求文档基线
     end
     rect rgb(176, 255, 208)
-    note over PM,AI: 【需求设计】
-    PM->>AI: PlanSprintReleases()，调用AI引擎，协助评估需求优先级以及生成迭代计划
+    note over PM,AI: 【需求设计跟踪】
+    PM->>AI: assignDesignTasks()，调用AI引擎，拆解需求设计任务
     AI-->>PM: 输出迭代计划
-    PM->>PDM: publish {需求详细设计}
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
+    PM->>PDM: publish(design:writePRD)
 
     PDM->>AI: writePRD()，调用AI引擎，协助生成PRD初稿
-    AI-->>PDM: 输出PRD初稿
-    PDM->>ENV: publish {Deign:PRD}
+    AI-->>PDM: 输出PRD
+    PDM-->>PM: publish(design:writePRDDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
+    PM->>DEV: publish(design:writeServiceDesign)
     DEV->>AI: writeServiceDesign()，调用AI引擎，协助生成微服务设计文档初稿
     AI-->>DEV: 输出微服务设计文档初稿
-    DEV->>ENV: publish {Deign:ServiceX}
+    DEV-->>PM: publish(design:writeServiceDesignDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
+    PM->>QA: publish(design:writeTestCase)
     QA->>AI: writeTestCase()，调用AI引擎，协助生成测试用例初稿
     AI-->>QA: 输出测试用例初稿
-    QA->>ENV: publish {Deign:Testcase}
+    QA-->>PM: publish(design:writeTestCaseDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
     PM->>AI: ReviewAllDesigns()，人工复核修正 + 文档AI一致性检查
     AI-->>PM: 输出一致性结果
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
     note over PM: 需求设计结束，形成设计文档基线
     end
     rect rgb(231, 235, 243)
-    note over PM,AI: 【需求实现】
+    note over PM,AI: 【需求实现跟踪】
 
-    PM->>AI: assignTasks()，调用AI引擎，协助拆解任务
+    PM->>AI: assignImpTasks()，调用AI引擎，协助拆解需求实现任务
     AI-->>PM: 输出任务列表
 
-    PM->>DO: publish {tasks:build}
-    DO->>AI: prepareBuild()，调用AI引擎，协助生成构建脚本初稿
-    AI-->>DO: 输出构建脚本初稿
-    
-    PM->>DEV: publish {tasks:Dev}
-    DEV->>AI: writeCode()，调用AI引擎，协助生成代码初稿
-    AI-->>DEV: 输出代码初稿
+    PM->>DO: publish(imp:writeDeploy)
+    DO->>AI: writeDeploy()，调用AI引擎，协助生成环境部署脚本初稿
+    AI-->>DO: 输出部署脚本初稿
+    DO-->>PM: publish(imp:writeDeployDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
-    DEV->>ENV: publish {tasks:Test}
+    PM->>DEV: publish(imp:writeCode)
+    DEV->>AI: writeCode()，调用AI引擎，协助生成代码初稿
+    AI-->>DEV: 输出代码
+    DEV-->>PM: publish(imp:writeCodeDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
+    
+    PM->>QA: publish(imp:writeTestCase)
     QA->>AI: writeTestCase()，调用AI引擎，协助生成测试用例初稿
     AI-->>QA: 输出测试用例初稿
-    QA->>ENV: publish {test:QA}
+    QA-->>PM: publish(imp:writeTestCaseDone)
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
-    PM->>DO: publish {tasks:deploy}
-    DO->>AI: prepareDeployment()，调用AI引擎，协助生成部署脚本初稿
-    AI-->>DO: 输出部署脚本初稿
-
-    PM->>AI: ReviewAllTasks()，人工复核修正 + 代码AI一致性检查
+    PM->>AI: ReviewAllImpTasks()，人工复核修正 + 代码AI一致性检查
     AI-->>PM: 输出一致性结果
+    PM->>PM: updateProjectTacking()，更新「任务管理」状态
     note over PM: 需求实现结束，形成项目代码基线
+    
    end
    rect rgb(250, 224, 252)
     note over PM,AI: 需求迭代结束
-    PM->>AI: reviewChanges()，总结change log
-    AI-->>PM: 输出change log，对比"最终文档 vs Git提交", 输出一致性分析报告
-    PM->>ENV: publish {上线完成}    
-    note over PM: 需求Flow结束，人工提交代码
+    PM->>AI: reviewProjectChanges()，总结分析项目版本之间的change log
+    AI-->>PM: 输出change log，输出一致性分析报告
+    PM->>PM: updateProjectTacking()，更新「需求管理」状态
+    PM->>ENV: publish(project:IterDone)
+    note over PM: 需求Flow结束，人工提交commit代码
     end
     
 ```
@@ -197,24 +219,32 @@ sequenceDiagram
 ### 6.1 需求收集阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `initProject()`：初始化或更新项目工程，包含项目配置、团队组建、技术栈选型（项目存在时执行更新）
-- **Publish**: `{project:ready}`项目就绪信号
+- **Action**: 
+  - `initProject()`：初始化项目环境
+  - `updateProjectTracking(data)`：更新ProjectTracking跟踪表
+- **Publish**: 
+  - `{project:ready}` 项目就绪信号
+  - `{requirement:bizParse}` 触发业务需求分析
+  - `{requirement:techParse}` 触发技术需求分析
 
 #### 需求分析师 (BA)
-- **Action**: `parseBizRequirement()`：分析业务需求，包含用户故事编写、业务流程梳理、需求优先级排序
-- **Observe**: `{projectInfo}`触发需求收集
-- **Publish**: `{requirement}`业务需求文档
+- **Observe**: `{requirement:bizParse}`
+- **Publish**: `{requirement:bizParseDone}` 业务需求解析完成信号
 
 #### 架构师 (EA)
-- **Action**: `parseTechRequirements()`：分析技术需求，包含性能指标、安全要求、系统约束
-- **Observe**: `{projectInfo}`触发需求收集
-- **Publish**: `{requirement}`技术需求文档
+- **Observe**: `{requirement:techParse}`
+- **Publish**: `{requirement:techParseDone}` 技术需求解析完成信号
 
 ### 6.2 需求设计阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `planSprintReleases()`：制定迭代计划，包含需求分解、任务排期
-- **Publish**: `{需求详细设计}`触发设计阶段
+- **Action**: 
+  - `assignDesignTasks()`：分配设计任务
+  - `updateProjectTracking(data)`：更新ProjectTracking跟踪表
+- **Publish**:
+  - `{design:writePRD}` 触发PRD编写
+  - `{design:writeServiceDesign}` 触发服务设计
+  - `{design:writeTestCase}` 触发测试用例设计
 
 #### 产品经理 (PDM)
 - **Action**: `writePRD()`：编写产品需求，包含功能描述、交互设计、验收标准
@@ -229,11 +259,11 @@ sequenceDiagram
 ### 6.3 需求实现阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `assignTasks()`：任务分配与跟踪，包含工作量评估、进度监控
+- **Action**: `assignImpTasks()`：任务分配与跟踪，包含工作量评估、进度监控
 - **Publish**: `{tasks:build}`, `{tasks:Dev}`, `{tasks:deploy}`任务清单
 
 #### DevOps工程师 (DO)
-- **Action**: `prepareDeployment()`：部署准备，包含环境配置、部署脚本编写
+- **Action**: `prepareDeploy()`：部署准备，包含环境配置、部署脚本编写
 - **Observe**: `{tasks:deploy}`部署任务
 - **Publish**: `{部署脚本}`部署配置
 
@@ -250,7 +280,7 @@ sequenceDiagram
 ### 6.4 迭代收尾阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `reviewChanges()`：变更审查，包含代码变更分析、文档更新检查
+- **Action**: `reviewProjectChanges()`：变更审查，包含代码变更分析、文档更新检查
 - **Observe**: 所有实现产物
 - **Publish**: `{上线完成}`变更日志
 
@@ -259,17 +289,18 @@ sequenceDiagram
 ## 7. P0 阶段 SOP 示范（流程细化）
 
 1. **需求收集阶段**
-   - PM：执行`initProject()`初始化/更新项目 → 发布`{project:ready}`
-   - BA/EA：并行执行需求分析 → 发布`{requirement}`
-   - PM：执行`ReviewAllRequirements()`完成需求基线
+   - PM：执行`initProject()` → 发布`{project:ready}`
+   - BA：接收`{requirement:bizParse}` → 发布`{requirement:bizParseDone}`
+   - EA：接收`{requirement:techParse}` → 发布`{requirement:techParseDone}`
+   - PM：执行`trackRequirement()`更新跟踪表
 
 2. **需求设计阶段**
-   - PM：调用`PlanSprintReleases()`生成迭代计划 → 发布`{需求详细设计}`
-   - PDM/DEV/QA：并行生成PRD/服务设计/测试用例 → 发布设计文档
-   - PM：执行`ReviewAllDesigns()`完成设计基线
+   - PM：发布`{design:writePRD}`/`{design:writeServiceDesign}`/`{design:writeTestCase}`
+   - PDM/DEV/QA：完成设计后发布完成信号（如`{design:writePRDDone}`）
+   - PM：执行`updateProjectTracking()`更新「需求管理」状态
 
 3. **需求实现阶段**
-   - PM：执行`assignTasks()`发布`{tasks:build}`,`{tasks:Dev}`,`{tasks:deploy}`
+   - PM：执行`assignImpTasks()`发布`{tasks:build}`,`{tasks:Dev}`,`{tasks:deploy}`
    - DO/DEV/QA：并行处理构建/编码/测试 → 发布实现产物
    - PM：执行`ReviewAllTasks()`完成代码基线
 

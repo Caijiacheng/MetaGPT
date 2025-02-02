@@ -40,9 +40,16 @@ class AICOEnvironment(Environment):
     MSG_TEST_RESULTS         = "test_results"         # 测试结果（JSON格式描述详细执行记录）
     MSG_DEBUG_RESULT         = "debug_result"         # 代码调试结果（JSON格式）
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(
+        self,
+        project_root: Path,
+        specs_dir: Path,
+        tracking_dir: Path
+    ):
         super().__init__()
-        self.project_root: Path = None
+        self.project_root = project_root
+        self.specs_dir = specs_dir
+        self.tracking_file = tracking_dir / "ProjectTracking.xlsx"
         self.docs_root: Path = None
         self.tracking_root: Path = None
         
