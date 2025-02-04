@@ -43,8 +43,6 @@ class AICOEnterpriseArchitect(AICOBaseRole):
         # 执行分析...
         tech_arch = await self._analyze_tech(msg.content["business_arch"])
         
-        # 更新跟踪表状态
-        self._update_tracking_status(req_file, "ea_parsed_time")
         
         # 发布技术架构
         await self.publish(AICOEnvironment.MSG_TECH_ARCH, {

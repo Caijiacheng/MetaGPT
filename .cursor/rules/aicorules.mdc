@@ -5,6 +5,107 @@ globs:
 
 # Your rule content
 
-## Best Practices
-- 避免硬编码
-- 避免使用全局变量
+## 架构设计原则
+
+### 分层原则
+```mermaid
+graph TD
+    A[Presentation Layer] --> B[Business Logic]
+    B --> C[Data Access Layer]
+    C --> D[Persistence Layer]
+```
+
+### 服务拆分原则
+- **单一职责**：每个服务/类只做一件事
+  ```python
+  # Bad: 混合业务逻辑与数据访问
+  class ProjectManager:
+      def save_to_excel(self): pass
+
+  # Good: 分离服务
+  class TrackingService:
+      def save(self): pass
+  ```
+- **明确边界**：通过接口定义服务契约
+  ```python
+  class ITrackingService(ABC):
+      @abstractmethod
+      def add_requirement(self): pass
+  ```
+
+### 单一事实来源原则
+ ```mermaid
+ graph TD
+     A[业务概念] --> B(唯一配置源)
+     B --> C[服务实现]
+     B --> D[测试用例]
+     B --> E[文档]
+ ```
+
+
+### 依赖方向
+```mermaid
+flowchart RL
+    A[高层模块] -->|依赖| B[抽象接口]
+    C[具体实现] .->|实现| B
+```
+
+
+
+
+## 编码规范
+
+### 配置化原则
+- 将易变参数提取到配置类/文件
+  ```python
+  # tracking_config.py
+  class SheetConfig:
+      RAW_REQ_HEADERS = ["需求文件", "需求类型"...]
+      
+  # 使用配置
+  ws.append(SheetConfig.RAW_REQ_HEADERS)
+  ```
+
+ ```
+### 禁止在服务类中定义业务常量
+
+### 常量管理
+- 使用Enum管理有限集合
+  ```python
+  class SheetType(Enum):
+      RAW_REQ = ("原始需求", 9)  # 表名 + 列数
+  ```
+
+### 防御式编程
+- 添加类型提示和校验
+  ```python
+  def add_requirement(self, req_data: dict) -> bool:
+      assert isinstance(req_data, dict), "参数类型错误"
+  ```
+
+## AI协作规范
+
+### 上下文提示
+- 为复杂方法添加设计意图注释
+  ```python
+  def _init_sheets(self):
+      """
+      初始化工作表结构（根据project_tracking_spec.md第3章）
+      顺序要求: 原始需求 -> 需求管理 -> 用户故事 -> 任务跟踪
+      """
+  ```
+
+### 模式引导
+- 使用标准模式名称约定
+  ```python
+  # 使用仓储模式示例
+  class TrackingRepository:
+      def get(self, id): pass
+  ```
+
+### 规避歧义
+- 避免使用同义词，统一术语
+  ```
+  统一使用: 需求ID (不用 req_id/requirement_id)
+  统一状态: 待分析/分析中/已完成 (不用 pending/processing)
+  ```

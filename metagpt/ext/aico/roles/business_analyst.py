@@ -44,8 +44,6 @@ class AICOBusinessAnalyst(AICOBaseRole):
         # 执行分析...
         analysis_result = await self._analyze_requirement(content)
         
-        # 更新跟踪表状态
-        self._update_tracking_status(req_path, "ba_parsed_time")
         
         # 发布业务架构
         await self.publish(AICOEnvironment.MSG_BUSINESS_ARCH, {
