@@ -38,7 +38,7 @@ AICO-Meta 的落地一般分为三个阶段，便于在不同企业环境中循�
 
 | 角色名称            | 核心业务能力 (Key Abilities)                                                                                                                                                 | 分阶段实现 (P0/P1/P2)                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
-| **项目经理 (PM)**   | - 端到端需求管理（`prepareProject`/`reviewAllRequirements`）<br>- 迭代计划制定（`planSprintReleases`）<br>- 任务拆解与分配（`assignTasks`）<br>- 项目协调与基线管理（三次Review动作） | **P0**：<br>• 需求→上线基础流程<br>• 三次基线评审<br>**P1**：<br>• 迭代阶段管理<br>**P2**：<br>• 多项目协同            |
+| **项目经理 (PM)**   | - 端到端需求管理（`initProject`/`reviewAllRequirements`）<br>- 迭代计划制定（`planSprintReleases`）<br>- 任务拆解与分配（`assignTasks`）<br>- 项目协调与基线管理（三次Review动作） | **P0**：<br>• 需求→上线基础流程<br>• 三次基线评审<br>**P1**：<br>• 迭代阶段管理<br>**P2**：<br>• 多项目协同            |
 | 需求分析师 (BA)      | - 业务需求解析（`parseRequirement`）<br>- 用户故事拆解<br>- 业务架构维护（`update4ABusiness`）<br>- 需求跟踪矩阵维护                                                                 | **P0**：<br>• 需求矩阵生成<br>• 用户故事初稿<br>**P1**：<br>• 需求变更管理<br>**P2**：<br>• 复杂业务建模              |
 | 产品经理 (PDM)      | - PRD文档编写（`writePRD`）<br>- 验收标准定义<br>- 需求设计阶段协同                                                                                                                                 | **P0**：<br>• PRD初稿生成<br>**P1**：<br>• 多版本迭代<br>**P2**：<br>• 用户反馈闭环                                  |
 | 架构师 (EA)        | - 技术需求解析（`parseTechRequirements`）<br>- 4A架构设计（`update4ATech`）<br>- 架构评审（时序图中设计阶段参与）<br>- 技术方案一致性保障                                                           | **P0**：<br>• 4A架构初稿<br>• 技术需求矩阵<br>**P1**：<br>• 架构评审流程<br>**P2**：<br>• 性能/安全专项优化           |
@@ -318,7 +318,7 @@ sequenceDiagram
 1. **核心角色扩展**
 
    - 在 MetaGPT 中，为 PM、BA、PDM、EA、DEV、QA、DO 定义各自 `Role` 类；
-   - 实现最基础的 Action (如 `PrepareProject()`, `parseBizRequirement()`, `writeServiceDesign()`, `writeCode()`, etc.)。
+   - 实现最基础的 Action (如 `initProject()`, `parseBizRequirement()`, `writeServiceDesign()`, `writeCode()`, etc.)。
 
 2. **消息机制**
 
