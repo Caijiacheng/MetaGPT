@@ -101,25 +101,31 @@ sequenceDiagram
     PM->>BA: publish(requirment:bizParse)，提交原始需求分析
     BA->>AI: parseBizRequirement()
     AI-->>BA: LLM输出解析结果
-    BA->>AI: update4ABiz()，调用AI引擎，协助更新业务架构和用户故事
-    AI-->>BA: 输出业务架构和用户故事
-    BA-->>PM: publish(requirment:bizParseDone)，需求解析结束
-  
-    PM->>PM: updateProjectTacking()，更新「需求管理」状态
-
+    BA-->>PM: publish(requirment:bizParseDone)，标准业务需求解析结束
 
     PM->>EA: publish(requirment:techParse)，提交原始需求分析
     EA->>AI: parseTechRequirements() 
     AI-->>EA: LLM输出解析结果
+    EA-->>PM: publish(requirment:techParseDone)，需求解析结束
+
+    PM->>PM: generateBaselineVersion()，设定基线版本version
+    PM->>PM: updateProjectTacking()，更新「需求管理」状态
+    
+    PM->>BA: publish(requirment:bizArch,version)，提交业务架构分析
+    BA->>AI: update4ABiz()，调用AI引擎，协助更新业务架构和用户故事
+    AI-->>BA: 输出业务架构和用户故事
+    BA-->>PM: publish(requirment:bizArchDone)，需求解析结束
+  
+    PM->>EA: publish(requirment:techArch,version)，提交技术架构分析
     EA->>AI: update4ATech()，调用AI引擎，协助更新技术架构（需要结合业务架构）
     AI-->>EA: 输出4A架构中的应用架构、数据架构、技术架构
-    EA-->>PM: publish(requirment:techParseDone)，需求解析结束
+    EA-->>PM: publish(requirment:techArchDone)，需求解析结束
     PM->>PM: updateProjectTacking()，更新「需求管理」状态
 
     PM->>AI: ReviewAllRequirements()，人工复核修正 + 文档AI一致性检查
     AI-->>PM: 输出一致性结果
     PM->>PM: updateProjectTacking()，更新「需求管理」状态
-    note over PM: 需求收集&分析结束，形成需求文档基线
+    note over PM: 需求收集&分析结束，形成需求文档基线,version
     end
     rect rgb(176, 255, 208)
     note over PM,AI: 【需求设计跟踪】
@@ -130,13 +136,13 @@ sequenceDiagram
 
     PDM->>AI: writePRD()，调用AI引擎，协助生成PRD初稿
     AI-->>PDM: 输出PRD
-    PDM-->>PM: publish(design:writePRDDone)
+    PDM-->>PM: publish(design:writePRDDone,version)
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
     PM->>DEV: publish(design:writeServiceDesign)
     DEV->>AI: writeServiceDesign()，调用AI引擎，协助生成微服务设计文档初稿
     AI-->>DEV: 输出微服务设计文档初稿
-    DEV-->>PM: publish(design:writeServiceDesignDone)
+    DEV-->>PM: publish(design:writeServiceDesignDone,version)
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
     PM->>QA: publish(design:writeTestCase)
@@ -148,7 +154,7 @@ sequenceDiagram
     PM->>AI: ReviewAllDesigns()，人工复核修正 + 文档AI一致性检查
     AI-->>PM: 输出一致性结果
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
-    note over PM: 需求设计结束，形成设计文档基线
+    note over PM: 需求设计结束，形成设计文档基线,version
     end
     rect rgb(231, 235, 243)
     note over PM,AI: 【需求实现跟踪】
@@ -156,36 +162,36 @@ sequenceDiagram
     PM->>AI: assignImpTasks()，调用AI引擎，协助拆解需求实现任务
     AI-->>PM: 输出任务列表
 
-    PM->>DO: publish(imp:writeDeploy)
+    PM->>DO: publish(imp:writeDeploy,version)
     DO->>AI: writeDeploy()，调用AI引擎，协助生成环境部署脚本初稿
     AI-->>DO: 输出部署脚本初稿
-    DO-->>PM: publish(imp:writeDeployDone)
+    DO-->>PM: publish(imp:writeDeployDone,version)
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
-    PM->>DEV: publish(imp:writeCode)
+    PM->>DEV: publish(imp:writeCode,version)
     DEV->>AI: writeCode()，调用AI引擎，协助生成代码初稿
     AI-->>DEV: 输出代码
-    DEV-->>PM: publish(imp:writeCodeDone)
+    DEV-->>PM: publish(imp:writeCodeDone,version)
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
     
-    PM->>QA: publish(imp:writeTestCase)
+    PM->>QA: publish(imp:writeTestCase,version)
     QA->>AI: writeTestCase()，调用AI引擎，协助生成测试用例初稿
     AI-->>QA: 输出测试用例初稿
-    QA-->>PM: publish(imp:writeTestCaseDone)
+    QA-->>PM: publish(imp:writeTestCaseDone,version)
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
 
     PM->>AI: ReviewAllImpTasks()，人工复核修正 + 代码AI一致性检查
     AI-->>PM: 输出一致性结果
     PM->>PM: updateProjectTacking()，更新「任务管理」状态
-    note over PM: 需求实现结束，形成项目代码基线
+    note over PM: 需求实现结束，形成项目代码基线,version
     
    end
    rect rgb(250, 224, 252)
     note over PM,AI: 需求迭代结束
-    PM->>AI: reviewProjectChanges()，总结分析项目版本之间的change log
+    PM->>AI: reviewProjectChanges(version-1, version)，总结分析项目版本之间的change log
     AI-->>PM: 输出change log，输出一致性分析报告
     PM->>PM: updateProjectTacking()，更新「需求管理」状态
-    PM->>ENV: publish(project:IterDone)
+    PM->>ENV: publish(project:IterDone,version)
     note over PM: 需求Flow结束，人工提交commit代码
     end
     
