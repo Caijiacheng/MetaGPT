@@ -30,6 +30,7 @@ from metagpt.ext.aico.config import config
 import shutil
 import asyncio
 from ..services.project_tracking_service import ProjectTrackingService, TrackingSheet, ColumnIndex
+from ..services.version_service import VersionService
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,9 @@ class AICOProjectManager(Role):
         self.tracking_svc = ProjectTrackingService(
             self.project_root / "tracking/ProjectTracking.xlsx"
         )
+        self.version_svc = VersionService()
+        self.baseline_versions = [self.version_svc.current]
+        self.current_baseline_version = self.version_svc.current
         
     def _init_project(self):
         """初始化或加载项目结构"""
@@ -120,28 +124,90 @@ class AICOProjectManager(Role):
         await self._process_implementation()
 
     async def _process_requirements(self):
-        """处理需求全流程（从config获取）"""
-        # 从config获取原始需求
-        raw_req = config.extra.get("raw_requirement")
-        if not raw_req:
-            logger.warning("未找到原始需求配置")
-            return
-        
-        # 保存需求文件
-        req_file = self._save_requirement_file(raw_req)
-        
-        # 登记到跟踪表
-        self._add_raw_requirement({
-            "file_path": str(req_file.relative_to(self.project_root)),
-            "type": raw_req["type"],
-            "comment": raw_req.get("comment", "")
-        })
-        
-        # 处理历史未分析需求（含重试机制）
+        """处理需求全流程（文档6.1.3节）"""
+        # 分发待分析需求
         pending_reqs = self.tracking_svc.get_pending_requirements()
         for req in pending_reqs:
-            await self._dispatch_requirement_analysis(req)
-        pass
+            await self.publish(AICOEnvironment.MSG_REQ_BIZ_ANALYSIS, {
+                "req_id": req["req_id"],
+                "file_path": req["file_path"],
+                "type": "business"
+            })
+        
+        # 监听BA分析状态
+        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_STARTED):
+            self.tracking_svc.update_raw_requirement_status(
+                req_id=msg.content["req_id"],
+                status="分析中"
+            )
+        
+        # 监听BA分析结果
+        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE):
+            # 获取新版本号
+            new_version = self._generate_new_version()
+            
+            # 提取变更点
+            changes = [
+                f"新增标准需求: {std_req['std_req_id']}" 
+                for std_req in msg.content["standard_requirements"]
+            ]
+            
+            # 记录版本信息
+            self.tracking_svc.add_version_record(
+                version=new_version,
+                doc_path=str(msg.content["user_stories_file"]),
+                doc_type="user_stories",
+                changes=changes,
+                related_reqs=[msg.content["biz_req_id"]]
+            )
+            
+            # 次版本号递增
+            self.baseline_versions.append(new_version)
+            self.current_baseline_version = new_version
+            
+            # 传递新版本号给BA
+            msg.content["version"] = new_version
+            
+            # 记录标准需求
+            for std_req in msg.content["standard_requirements"]:
+                self.tracking_svc.add_standard_requirement({
+                    "std_req_id": std_req["std_req_id"],
+                    "raw_req_id": msg.content["raw_req_id"],
+                    "description": std_req["description"],
+                    "priority": std_req["priority"]
+                })
+                
+                # 记录用户故事
+                for story in msg.content["user_stories"].get(std_req["std_req_id"], []):
+                    self.tracking_svc.add_user_story({
+                        "story_id": story["story_id"],
+                        "std_req_id": std_req["std_req_id"],
+                        "title": story["title"],
+                        "description": story["description"]
+                    })
+            
+            # 记录用户故事文档路径
+            self.tracking_svc.add_project_artifact(
+                artifact_type="user_stories",
+                version=msg.content["version"],
+                file_path=msg.content["user_stories_file"]
+            )
+            
+            # 更新需求基线状态
+            self.tracking_svc.update_raw_requirement_status(
+                req_id=msg.content["req_id"],
+                status="业务分析完成",
+                biz_req_id=msg.content["biz_req_id"]
+            )
+            
+            logger.info(f"业务需求处理完成: {msg.content['biz_req_id']}")
+        
+        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_FAILED):
+            self.tracking_svc.update_raw_requirement_status(
+                req_id=msg.content["req_id"],
+                status="分析失败",
+                comment=msg.content["error"]
+            )
 
     async def _handle_new_requirement(self, msg):
         """处理新输入的原始需求"""
@@ -290,4 +356,62 @@ class AICOProjectManager(Role):
         """更新任务进度"""
         self.tracking_svc.update_task_progress(task_id, progress)
         self.tracking_svc.save()
+
+    def _clean_old_versions(self):
+        """智能版本清理"""
+        version_map = {}
+        for v in self.baseline_versions:
+            major, minor, patch = map(int, v.split('.'))
+            if major not in version_map:
+                version_map[major] = {}
+            if minor not in version_map[major]:
+                version_map[major][minor] = []
+            version_map[major][minor].append(patch)
+        
+        # 清理逻辑
+        for major in version_map:
+            # 保留最近3个次版本
+            minors = sorted(version_map[major].keys(), reverse=True)[:3]
+            for minor in list(version_map[major].keys()):
+                if minor not in minors:
+                    # 删除该次版本所有文件
+                    self._delete_version_files(f"v{major}.{minor}.*")
+                    del version_map[major][minor]
+            
+            # 每个次版本保留最近2个修订版
+            for minor in minors:
+                patches = sorted(version_map[major][minor], reverse=True)[:2]
+                for patch in list(version_map[major][minor]):
+                    if patch not in patches:
+                        self._delete_version_files(f"v{major}.{minor}.{patch}")
+                        version_map[major][minor].remove(patch)
+
+    def _generate_new_version(self) -> str:
+        """生成语义化版本号"""
+        last_version = self.tracking_svc.get_latest_version("user_stories")
+        major, minor, patch = map(int, last_version.split('.'))
+        return f"{major}.{minor+1}.0"
+
+    def generate_version_report(self, version: str) -> str:
+        """生成版本变更报告"""
+        history = self.tracking_svc.get_version_history()
+        target = next((h for h in history if h["version"] == version), None)
+        
+        if not target:
+            return f"版本 {version} 未找到"
+        
+        report = f"# 版本变更报告 ({version})\n\n"
+        report += f"**生成时间**: {target['time']}\n"
+        report += f"**关联文档**: [{target['doc_path']}]({target['doc_path']})\n\n"
+        
+        report += "## 主要变更\n"
+        for change in target["changes"]:
+            report += f"- {change}\n"
+        
+        report += "\n## 关联需求\n"
+        for req_id in target["related_reqs"]:
+            req_info = self.tracking_svc.get_requirement_info(req_id)
+            report += f"- {req_id}: {req_info.get('description', '')}\n"
+        
+        return report
 

@@ -10,7 +10,7 @@
   1. parseBizRequirement: 调用AI引擎分析业务需求,生成需求矩阵
   2. update4ABusiness: 调用AI引擎更新业务架构,生成用户故事
 """
-from typing import Dict
+from typing import Dict, List
 from datetime import datetime
 from openpyxl import load_workbook, Workbook
 from metagpt.actions import Action
@@ -18,186 +18,142 @@ import json
 from ..actions.base_action import AICOBaseAction
 from pathlib import Path
 from metagpt.ext.aico.services import SpecService
+from metagpt.actions import ActionOutput
+import logging
 
 # 新增常量
 ARCH_REFERENCE_PATH = Path("docs/aico/specs/EA-Design.md")
 
 PARSE_BIZ_REQUIREMENT_PROMPT = """
-请按以下优先级应用规范：
-1️⃣ 项目专属规范（下方第二部分）
-2️⃣ 全局通用规范（下方第一部分）
+作为资深业务分析师，请根据以下规范分析需求：
 
-【全局规范】
-{global_spec}
-
-【项目规范】
+【优先应用规范】
 {project_spec}
 
-请根据以上规范处理需求：
+【全局参考规范】
+{global_spec}
+
+【待分析需求内容】
 {raw_requirement}
+
+请按以下结构输出：
+1. 业务架构更新建议
+2. 关键业务流程（Mermaid图表）
+3. 初步用户故事列表
 """
 
 UPDATE_4A_BUSINESS_PROMPT = """
-你是一位业务分析师,请基于业务需求矩阵,调用AI引擎协助更新业务架构并生成用户故事:
+基于当前架构：
+{current_architecture}
 
-1. 业务架构部分需包含:
-{
-    "business_architecture": {
-        "vision": "企业愿景",
-        "goals": ["业务目标"],
-        "scope": "业务范围",
-        "capabilities": ["核心能力", "支撑能力"],
-        "process": {
-            "diagram": "mermaid语法的业务流程图",
-            "description": "流程说明"
-        }
-    }
-}
-
-2. 用户故事部分需包含:
-{
-    "story_id": "US-XXX",
-    "related_req_id": "REQ-XXX",
-    "title": "故事名称",
-    "description": "As a <角色>, I want <功能> so that <价值>",
-    "priority": "高/中/低",
-    "status": "待评审",
-    "acceptance_criteria": "验收标准",
-    "created_time": "YYYY-MM-DD HH:mm:ss"
-}
-
-业务需求矩阵:
+和需求矩阵：
 {requirement_matrix}
+
+请：
+1. 更新4A业务架构
+2. 生成符合INVEST原则的用户故事
+3. 标识与之前版本的变更点
 """
 
+logger = logging.getLogger(__name__)
+
 class ParseBizRequirement(AICOBaseAction):
-    """调用AI引擎分析业务需求"""
+    """遵循规范的业务需求解析"""
     
-    async def validate_input(self, input_data: Dict) -> bool:
-        required_fields = ["raw_requirement", "tracking_file"]
-        return all(field in input_data for field in required_fields)
-        
     async def _run_impl(self, input_data: Dict) -> Dict:
-        # 初始化规范服务
-        spec_service = SpecService(input_data.get("project_root"))
+        # 获取项目规范服务
+        spec_service = SpecService(Path(input_data["project_root"]))
         
-        # 分别获取规范内容
-        global_spec = spec_service.get_global_spec("ea_design")
-        project_spec = spec_service.get_project_spec("ea_design")
-        
-        # 生成提示词时分别传递
+        # 生成带规范优先级的提示词
         prompt = PARSE_BIZ_REQUIREMENT_PROMPT.format(
-            global_spec=global_spec,
-            project_spec=project_spec,
+            global_spec=spec_service.get_global_spec("ea_design"),
+            project_spec=spec_service.get_project_spec("ea_design"),
             raw_requirement=input_data["raw_requirement"]
         )
-        result = await self.llm.aask(prompt)
         
-        # 写入需求跟踪表
-        tracking_file = Path(input_data["tracking_file"])
-        if tracking_file.exists():
-            wb = load_workbook(tracking_file)
-            req_sheet = wb["需求管理"]
-        else:
-            wb = Workbook()
-            # 初始化所有Sheet
-            req_sheet = wb.active
-            req_sheet.title = "原始需求"
-            wb.create_sheet("需求管理")
-            wb.create_sheet("用户故事管理")
-            wb.create_sheet("任务跟踪")
+        # 调用LLM并解析结果
+        result = await self.parse_llm_response(prompt)
         
-        # 生成需求ID
-        req_id = f"REQ-{len(req_sheet.rows):03d}"
-        req_data = json.loads(result)
+        # 生成标准化需求ID
+        req_id = f"RQ-B-{datetime.now().strftime('%Y%m%d%H%M%S')}"
         
-        # 写入需求管理表
-        req_sheet.append([
-            req_id,
-            input_data["raw_requirement"],  # 新增原始需求文件
-            req_data["business_architecture"]["processes"][0] + "需求",
-            req_data["business_architecture"]["processes"][0] + "流程需求",
-            "业务需求",
-            "高",
-            "待评审",
-            "BA系统",
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "",
-            "符合业务架构规范",
-            "自动生成"
-        ])
-        
-        # 更新原始需求表的关联
-        raw_sheet = wb["原始需求"]
-        for row in raw_sheet.iter_rows(min_row=2):
-            if row[0].value == input_data["raw_requirement"]:
-                row[4].value = req_id  # 第5列为关联需求ID
-                break
-                
-        # 更新原始需求状态
-        self._update_raw_req_status(
-            tracking_file=Path(input_data["tracking_file"]),
-            req_file=Path(input_data["raw_requirement"]),
-            status="parsed_by_ba",
-            role="BA",
-            req_id=req_id  # 传递生成的REQ-ID
+        return ActionOutput(
+            content=input_data,
+            instruct_content={
+                "standard_requirements": [
+                    {
+                        "std_req_id": f"SR-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                        "description": req_desc,
+                        "priority": "高"
+                    }
+                    for req_desc in result["requirements"]
+                ]
+            }
         )
-        
-        wb.save(tracking_file)
-        
-        return {
-            "requirement_id": req_id,
-            "business_architecture": req_data["business_architecture"],
-            "user_stories": req_data["user_stories"],
-            "tracking_file": str(tracking_file)
-        }
+
+    async def parse_llm_response(self, prompt: str) -> dict:
+        """标准化响应解析（新增规范校验）"""
+        raw_result = await self.llm.aask(prompt)
+        try:
+            result = json.loads(raw_result)
+            # 校验必要字段
+            assert "business_architecture" in result
+            assert "process_diagram" in result
+            assert "user_stories" in result
+            return result
+        except (json.JSONDecodeError, AssertionError) as e:
+            logger.error(f"LLM响应解析失败: {str(e)}")
+            raise ValueError("业务需求解析结果格式错误")
 
 class Update4ABusiness(AICOBaseAction):
-    """调用AI引擎更新业务架构,生成用户故事"""
+    """基于规范更新4A业务架构"""
+    
     async def _run_impl(self, input_data: Dict) -> Dict:
-        # 加载参考架构
-        with open(ARCH_REFERENCE_PATH, "r") as f:
-            arch_ref = f.read()
-            
+        # 加载当前业务架构
+        arch_file = Path(input_data["project_root"]) / "docs/ea/biz_architecture.md"
+        current_arch = arch_file.read_text(encoding="utf-8") if arch_file.exists() else ""
+        
+        # 生成更新提示词
         prompt = UPDATE_4A_BUSINESS_PROMPT.format(
-            arch_reference=arch_ref,
-            requirement_id=input_data["requirement_id"],
-            business_arch=input_data["business_architecture"]
+            current_architecture=current_arch,
+            requirement_matrix=json.dumps(input_data["requirement_matrix"], indent=2)
         )
-        result = await self.llm.aask(prompt)
-        analysis = json.loads(result)
         
-        # 写入用户故事
-        tracking_file = Path(input_data["tracking_file"])
-        wb = load_workbook(tracking_file)
-        if "用户故事管理" not in wb.sheetnames:
-            wb.create_sheet("用户故事管理")
-            story_sheet = wb["用户故事管理"]
-            story_sheet.append([
-                "用户故事ID", "关联需求ID", "用户故事名称", "用户故事描述",
-                "优先级", "状态", "验收标准", "创建时间", "备注"
-            ])
-        else:
-            story_sheet = wb["用户故事管理"]
-            
-        for idx, story in enumerate(analysis["user_stories"], 1):
-            story_id = f"US-{len(story_sheet.rows):03d}"
-            story_sheet.append([
-                story_id,
-                input_data["requirement_id"],
-                story["title"],
-                story["description"],
-                "高",  # 默认优先级
-                "待评审",  # 状态
-                "\n".join(story["acceptance_criteria"]),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "自动生成"
-            ])
-            
-        wb.save(tracking_file)
+        # 调用LLM生成更新建议
+        result = await self.parse_llm_response(prompt)
         
-        return {
-            "updated_architecture": analysis["business_architecture"],
-            "user_stories": analysis["user_stories"],
-            "tracking_file": str(tracking_file)
-        } 
+        # 保存更新后的架构
+        arch_file.parent.mkdir(parents=True, exist_ok=True)
+        arch_file.write_text(result["updated_architecture"], encoding="utf-8")
+        
+        # 新增架构变更对比
+        old_arch = input_data.get("current_architecture", "")
+        new_arch = result["updated_architecture"]
+        changes = self._diff_architecture(old_arch, new_arch)
+        
+        return ActionOutput(
+            content=input_data,
+            instruct_content={
+                "user_stories": {
+                    std_req["std_req_id"]: [
+                        {
+                            "story_id": f"US-{std_req['std_req_id']}-{idx:02d}",
+                            "title": story["title"],
+                            "status": "待评审",
+                            "acceptance_criteria": story["acceptance_criteria"]
+                        }
+                        for idx, story in enumerate(stories, 1)
+                    ]
+                    for std_req in input_data["standard_requirements"]
+                },
+                "version": datetime.now().strftime("%Y%m%d%H%M")
+            }
+        )
+    
+    def _format_user_stories(self, stories: List, req_id: str) -> List:
+        return [{
+            **story,
+            "req_id": req_id,
+            "status": "待评审",
+            "created_time": datetime.now().isoformat()
+        } for story in stories] 
