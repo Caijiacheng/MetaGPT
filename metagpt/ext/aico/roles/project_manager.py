@@ -483,45 +483,4 @@ class AICOProjectManager(Role):
         self.tracking_svc.mark_baseline("design", version)  # 设计基线确认
         self.tracking_svc.update_design_status(req_id, "基线化")  # 单个需求设计状态更新
 
-    async def handle_change_request(self, change_data: dict):
-        """处理变更请求（对应文档7章）"""
-        # 创建变更记录
-        change_id = self.tracking_svc.add_change(
-            change_type=change_data["type"],
-            description=change_data["reason"],
-            impact_analysis=change_data.get("impact")
-        )
-        
-        # 发布变更审批事件
-        await self.publish("project:change_review", {
-            "change_id": change_id,
-            "details": change_data
-        })
-        
-        # 监听审批结果
-        result = await self.observe("project:change_approved", timeout=3600)
-        if result and result.content["approved"]:
-            # 创建变更实施任务
-            task_id = self._create_change_tasks(change_id)
-            return {"status": "approved", "task_id": task_id}
-        return {"status": "rejected"}
-
-    async def handle_change_request(self, change_data: dict):
-        change_id = self.tracking_svc.add_change(...)  # 创建变更记录
-        # 在审批通过后
-        self.tracking_svc.update_change_status(change_id, "approved")
-
-    def _create_change_tasks(self, change_id):
-        # 调用现有任务创建方法时补充变更关联
-        task_data = {
-            "related_change_id": change_id,  # 新增字段
-            "artifacts": ["docs/changes/CHG-001.md"]  # 变更文档
-        }
-        self.tracking_svc.add_task(task_data)
-
-    async def _confirm_code_baseline(self):
-        code_req_ids = [...]  # 获取通过评审的需求ID
-        self.tracking_svc.mark_baseline("code", self.current_version, code_req_ids)
-        await self.publish("project:code_baseline_confirmed", {"version": self.current_version})
-
 

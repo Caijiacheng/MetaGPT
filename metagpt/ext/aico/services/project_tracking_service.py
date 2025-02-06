@@ -397,46 +397,6 @@ class ProjectTrackingService:
         required_fields = ["file_path", "description", "source"]
         return all(field in req_data for field in required_fields)
 
-    def add_change(self, change_data: dict) -> str:
-        """添加变更记录"""
-        ws = self.wb[SheetType.CHANGE_MGMT.value.name]
-        cols = SheetType.CHANGE_MGMT.value.columns
-        
-        change_id = f"CHG-{ws.max_row:03d}"
-        ws.append([
-            change_id,
-            change_data.get("related_req_id"),
-            change_data.get("change_type"),
-            change_data.get("description"),
-            change_data.get("impact_analysis"),
-            f"{change_data.get('submitter')}/{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-            "待审批",
-            "未开始",
-            change_data.get("baseline_impact"),
-            "",
-            None
-        ])
-        self.wb.save(self.file_path)
-        return change_id
-
-    def update_change_status(self, change_id: str, status: str, comment: str = ""):
-        """更新变更状态"""
-        ws = self.wb[SheetType.CHANGE_MGMT.value.name]
-        cols = SheetType.CHANGE_MGMT.value.columns
-        
-        for row in ws.iter_rows(min_row=2):
-            if row[cols.CHANGE_ID.value-1].value == change_id:
-                if status == "approved":
-                    row[cols.APPROVAL_STATUS.value-1].value = "已批准"
-                elif status == "rejected":
-                    row[cols.APPROVAL_STATUS.value-1].value = "已拒绝"
-                    row[cols.IMPLEMENT_STATUS.value-1].value = "已关闭"
-                    row[cols.CLOSE_TIME.value-1].value = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                row[cols.IMPACT_ANALYSIS.value-1].value = comment
-                self.wb.save(self.file_path)
-                return True
-        return False
-
     def update_design_status(self, req_id: str, status: str, design_doc: str = None):
         """更新需求设计状态"""
         ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]

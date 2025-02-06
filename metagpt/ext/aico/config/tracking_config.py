@@ -67,14 +67,6 @@ class TaskTrackingColumns(Enum):
     ACTUAL_END = 12      # 实际结束时间
     TASK_NOTES = 13      # 备注
 
-class VersionHistoryColumns(Enum):
-    """版本历史表列定义"""
-    VERSION = 1          # 版本号
-    GEN_TIME = 2         # 生成时间
-    DOC_PATH = 3         # 文档路径
-    DOC_TYPE = 4         # 类型
-    CHANGES = 5          # 变更摘要
-    RELATED_REQS = 6     # 关联需求
 
 class SheetType(Enum):
     RAW_REQUIREMENT = SheetConfig(
@@ -97,11 +89,7 @@ class SheetType(Enum):
         headers=[c.name for c in TaskTrackingColumns],
         columns=TaskTrackingColumns
     )
-    VERSION_HISTORY = SheetConfig(
-        name="版本历史",
-        headers=[c.name for c in VersionHistoryColumns],
-        columns=VersionHistoryColumns
-    )
+
 
     @classmethod
     def get_required_sheets(cls):
