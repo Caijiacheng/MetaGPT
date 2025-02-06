@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 from metagpt.environment.base_env import Environment
 from metagpt.ext.aico.services.spec_service import SpecService
-from metagpt.schemas.message import MessageSchema
+from metagpt.schemas.message import MessageSchema, MessageType
 
 
 class AICOEnvironment(Environment):
@@ -79,6 +79,9 @@ class AICOEnvironment(Environment):
             "output_files": list    # 生成的架构文档路径
         }
     )
+    MSG_BA_ANALYSIS_STARTED = MessageType("ba_analysis:started")
+    MSG_EA_ANALYSIS_STARTED = MessageType("ea_analysis:started")
+    MSG_TASK_UPDATE = MessageType("task:update")
 
     def __init__(
         self,

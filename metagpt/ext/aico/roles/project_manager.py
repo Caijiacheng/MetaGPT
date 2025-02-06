@@ -31,6 +31,7 @@ import shutil
 import asyncio
 from ..services.project_tracking_service import ProjectTrackingService, TrackingSheet, ColumnIndex
 from ..services.version_service import VersionService
+from ..services.version_service import get_current_version, update_version_file
 
 logger = logging.getLogger(__name__)
 
@@ -45,42 +46,66 @@ class AICOProjectManager(Role):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_actions([ReviewRequirement, ReviewDesign, ReviewAllRequirements])  # 只保留需要LLM交互的Action
-        self._init_project()  # 项目初始化改为角色内部方法
-        self.tracking_svc = ProjectTrackingService(
-            self.project_root / "tracking/ProjectTracking.xlsx"
-        )
-        self.version_svc = VersionService()
+        self.version_svc = VersionService(self.project_root)  # 注入项目根目录
         self.baseline_versions = [self.version_svc.current]
         self.current_baseline_version = self.version_svc.current
         
     def _init_project(self):
-        """初始化或加载项目结构"""
+        """严格遵循文档结构的初始化方法"""
+        base_dirs = [
+            # 核心目录结构（按文档4.2节）
+            "docs/specs",
+            "docs/requirements/raw",
+            "docs/requirements/analyzed",
+            "docs/ea/biz_arch",
+            "docs/ea/tech_arch",
+            "docs/design/prd",
+            "docs/design/services",
+            "docs/design/tests",
+            "releases",
+            "tracking"
+        ]
+
         if self.project_root.exists():
             logger.info(f"加载现有项目: {self.project_root}")
-            # 调整顺序：先校验再同步
-            tracking_file = self.project_root / "tracking/ProjectTracking.xlsx"
-            if tracking_file.exists() and not self._validate_tracking_file():
-                logger.error("项目跟踪表结构不兼容，请手动处理！")
-                raise ValueError("ProjectTracking.xlsx schema mismatch")
+            self._validate_project_structure()
             self._sync_specs()
             return
-        
-        # 创建新项目结构
-        logger.info(f"初始化新项目: {self.project_root}")
-        dirs = [
-            "docs/aico/specs",  # 项目专属规范目录
-            "docs/ea",
-            "docs/requirements",
-            "tracking",
-            "src",
-            "config"
-        ]
-        for d in dirs:
-            (self.project_root / d).mkdir(parents=True, exist_ok=True)
-        
-        self._sync_specs(force=True)  # 强制同步规范模板
+
+        # 创建新项目结构（不包含版本号）
+        logger.info(f"初始化新项目结构: {self.project_root}")
+        for rel_path in base_dirs:
+            abs_path = self.project_root / rel_path
+            abs_path.mkdir(parents=True, exist_ok=True)
+            logger.debug(f"创建目录: {abs_path}")
+
+        # 创建跟踪表（不初始化需求文档）
         self._create_tracking_file()
+        logger.info("项目结构初始化完成")
+
+    def _validate_project_structure(self):
+        """校验目录结构符合规范"""
+        required_dirs = [
+            "docs/requirements/raw",
+            "docs/requirements/analyzed",
+            "docs/ea/biz_arch",
+            "docs/ea/tech_arch",
+            "docs/design/prd",
+            "docs/design/services",
+            "docs/design/tests",
+            "releases"
+        ]
         
+        missing_dirs = []
+        for d in required_dirs:
+            if not (self.project_root / d).exists():
+                missing_dirs.append(d)
+        
+        if missing_dirs:
+            logger.error(f"项目结构不完整，缺失目录: {missing_dirs}")
+            raise ValueError("Invalid project structure")
+
+
     def _sync_specs(self, force: bool = False):
         """同步规范文件（项目规范优先于全局规范）"""
         global_spec_root = Path(config.workspace.specs)  # 全局规范路径
@@ -124,90 +149,112 @@ class AICOProjectManager(Role):
         await self._process_implementation()
 
     async def _process_requirements(self):
-        """处理需求全流程（文档6.1.3节）"""
-        # 分发待分析需求
+        """严格遵循文档6.1节的时序"""
+        # 阶段1：需求收集（文档6.1.1）
+        await self._collect_requirements()
+        
+        # 阶段2：需求分析（文档6.1.2）
+        await self._analyze_requirements()
+        
+        # 阶段3：需求基线确认（文档6.1.3）
+        await self._confirm_baseline()
+
+    async def _collect_requirements(self):
+        """需求收集阶段（文档6.1.1）"""
+        # 处理启动参数传入的需求
+        if self.rc.env.requirements:
+            for req in self.rc.env.requirements:
+                await self._process_input_requirement(req)
+        
+        # 监听外部输入（文件/API等）
+        async for msg in self.observe(AICOEnvironment.MSG_NEW_REQUIREMENT):
+            await self._process_input_requirement(msg.content)
+        
+        # 扫描未登记需求
+        self._scan_unregistered_reqs()
+
+    async def _process_input_requirement(self, req_input: dict):
+        """统一处理各种输入方式的需求"""
+        # 处理文件输入
+        if "file_path" in req_input:
+            self._save_requirement_file(req_input["file_path"])
+            self._add_to_tracking(req_input)
+        # 处理文本输入
+        elif "text" in req_input:
+            req_file = self._save_requirement_text(req_input["text"])
+            self._add_to_tracking({"file_path": str(req_file)})
+        else:
+            logger.error("无效的需求输入格式")
+
+    def _save_requirement_file(self, file_path: str):
+        """保存需求文件到raw目录"""
+        src = Path(file_path)
+        dest = self.project_root / "docs/requirements/raw" / src.name
+        shutil.copy2(src, dest)
+        logger.info(f"需求文件已保存: {dest}")
+
+    def _save_requirement_text(self, text: str) -> Path:
+        """保存文本需求到文件"""
+        req_dir = self.project_root / "docs/requirements/raw"
+        req_dir.mkdir(exist_ok=True)
+        
+        filename = f"REQ-{datetime.now().strftime('%Y%m%d%H%M%S')}.md"
+        req_file = req_dir / filename
+        req_file.write_text(text)
+        return req_file
+
+    def _add_to_tracking(self, req_data: dict):
+        """添加需求到跟踪表"""
+        self.tracking_svc.add_raw_requirement(
+            file_path=req_data["file_path"],
+            description=req_data.get("description", ""),
+            source=req_data.get("source", "manual")
+        )
+
+    async def _analyze_requirements(self):
+        """需求分析阶段（文档6.1.2）"""
+        # 分发待分析需求（BA+EA并行）
         pending_reqs = self.tracking_svc.get_pending_requirements()
         for req in pending_reqs:
-            await self.publish(AICOEnvironment.MSG_REQ_BIZ_ANALYSIS, {
-                "req_id": req["req_id"],
-                "file_path": req["file_path"],
-                "type": "business"
-            })
-        
-        # 监听BA分析状态
-        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_STARTED):
-            self.tracking_svc.update_raw_requirement_status(
-                req_id=msg.content["req_id"],
-                status="分析中"
-            )
-        
-        # 监听BA分析结果
+            await self._dispatch_analysis(req)
+
+        # 监听分析结果（严格按顺序）
         async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE):
-            # 获取新版本号
-            new_version = self._generate_new_version()
-            
-            # 提取变更点
-            changes = [
-                f"新增标准需求: {std_req['std_req_id']}" 
-                for std_req in msg.content["standard_requirements"]
-            ]
-            
-            # 记录版本信息
-            self.tracking_svc.add_version_record(
-                version=new_version,
-                doc_path=str(msg.content["user_stories_file"]),
-                doc_type="user_stories",
-                changes=changes,
-                related_reqs=[msg.content["biz_req_id"]]
-            )
-            
-            # 次版本号递增
-            self.baseline_versions.append(new_version)
-            self.current_baseline_version = new_version
-            
-            # 传递新版本号给BA
-            msg.content["version"] = new_version
-            
-            # 记录标准需求
-            for std_req in msg.content["standard_requirements"]:
-                self.tracking_svc.add_standard_requirement({
-                    "std_req_id": std_req["std_req_id"],
-                    "raw_req_id": msg.content["raw_req_id"],
-                    "description": std_req["description"],
-                    "priority": std_req["priority"]
-                })
-                
-                # 记录用户故事
-                for story in msg.content["user_stories"].get(std_req["std_req_id"], []):
-                    self.tracking_svc.add_user_story({
-                        "story_id": story["story_id"],
-                        "std_req_id": std_req["std_req_id"],
-                        "title": story["title"],
-                        "description": story["description"]
-                    })
-            
-            # 记录用户故事文档路径
-            self.tracking_svc.add_project_artifact(
-                artifact_type="user_stories",
-                version=msg.content["version"],
-                file_path=msg.content["user_stories_file"]
-            )
-            
-            # 更新需求基线状态
-            self.tracking_svc.update_raw_requirement_status(
-                req_id=msg.content["req_id"],
-                status="业务分析完成",
-                biz_req_id=msg.content["biz_req_id"]
-            )
-            
-            logger.info(f"业务需求处理完成: {msg.content['biz_req_id']}")
+            self._handle_ba_result(msg)
         
-        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_FAILED):
-            self.tracking_svc.update_raw_requirement_status(
-                req_id=msg.content["req_id"],
-                status="分析失败",
-                comment=msg.content["error"]
-            )
+        async for msg in self.observe(AICOEnvironment.MSG_EA_ANALYSIS_DONE): 
+            self._handle_ea_result(msg)
+
+    async def _dispatch_analysis(self, req: dict):
+        """分发需求分析任务（文档6.1.2步骤1）"""
+        # 发布BA分析任务
+        await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_STARTED, {
+            "req_id": req["req_id"],
+            "content": req["description"]
+        })
+        
+        # 发布EA分析任务
+        await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_STARTED, {
+            "req_id": req["req_id"],
+            "tech_scope": req.get("tech_scope", "")
+        })
+
+    async def _confirm_baseline(self):
+        """需求基线确认（文档6.1.3）"""
+        # 仅当所有需求分析完成
+        if self._all_requirements_analyzed():
+            # 生成新版本（严格在最后阶段）
+            change_type = self._determine_version_change()
+            new_version = self.version_svc.bump(change_type)
+            
+            # 创建版本目录结构
+            self._create_version_dirs(new_version)
+            
+            # 发布基线确认事件
+            await self.publish(AICOEnvironment.MSG_REQ_BASELINE_CONFIRMED, {
+                "version": new_version,
+                "requirements": self._get_baseline_reqs()
+            })
 
     async def _handle_new_requirement(self, msg):
         """处理新输入的原始需求"""
@@ -244,79 +291,6 @@ class AICOProjectManager(Role):
             comment=req_info.get("comment", "")
         )
         self.tracking_svc.save()
-
-    async def _dispatch_requirement_analysis(self, req_info: dict):
-        """分发需求分析任务"""
-        req_file = self.project_root / req_info["file"]
-        raw_req_path = str(req_file.relative_to(self.project_root))
-        
-        # 检查BA分析状态
-        if not self.tracking_svc.get_raw_requirement_status(raw_req_path) or \
-           not self.tracking_svc.get_raw_requirement_status(raw_req_path).get("ba_time"):
-            await self._process_ba_analysis(req_file, raw_req_path)
-            
-        # 检查EA分析状态    
-        if not self.tracking_svc.get_raw_requirement_status(raw_req_path) or \
-           not self.tracking_svc.get_raw_requirement_status(raw_req_path).get("ea_time"):
-            await self._process_ea_analysis(req_file, raw_req_path)
-
-    async def _process_ba_analysis(self, req_file: Path, raw_req_path: str):
-        """处理BA分析流程"""
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS, {
-            "req_id": req_file.stem,
-            "file_path": str(req_file),
-            "type": "business"
-        })
-        
-        async for ba_msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE):
-            if ba_msg.content["req_id"] == req_file.stem:
-                # 生成业务需求ID
-                biz_req_id = f"RQ-B-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-                
-                # 使用服务类更新跟踪表
-                self.tracking_svc.add_requirement(
-                    req_id=biz_req_id,
-                    raw_file=raw_req_path,
-                    req_data=ba_msg.content["standard_req"],
-                    output_files=ba_msg.content["output_files"]
-                )
-                
-                self.tracking_svc.add_user_stories(
-                    biz_req_id=biz_req_id,
-                    stories=ba_msg.content["user_stories"]
-                )
-                
-                self.tracking_svc.update_raw_requirement_status(
-                    file_path=raw_req_path,
-                    status="业务分析完成"
-                )
-                self.tracking_svc.save()
-                break
-
-    async def _process_ea_analysis(self, req_file: Path, raw_req_path: str):
-        """处理EA分析流程"""
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_TECH_ANALYSIS, {
-            "req_id": raw_req_path.split("/")[-1],
-            "biz_req_id": raw_req_path.split("/")[-1].split("-")[1],
-            "file_path": raw_req_path
-        })
-        
-        async for ea_msg in self.observe(AICOEnvironment.MSG_EA_ANALYSIS_DONE):
-            # 生成技术需求ID
-            tech_req_id = f"RQ-T-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            
-            # 更新跟踪表
-            self.tracking_svc.add_requirement(
-                req_id=tech_req_id,
-                raw_file=raw_req_path,
-                req_data=ea_msg.content["tech_req"],
-                output_files=ea_msg.content["output_files"]
-            )
-            
-            self.tracking_svc.update_raw_requirement_status(
-                file_path=raw_req_path,
-                status="技术分析完成"
-            )
 
     async def _process_design(self):
         """处理设计阶段"""
@@ -358,39 +332,21 @@ class AICOProjectManager(Role):
         self.tracking_svc.save()
 
     def _clean_old_versions(self):
-        """智能版本清理"""
-        version_map = {}
-        for v in self.baseline_versions:
-            major, minor, patch = map(int, v.split('.'))
-            if major not in version_map:
-                version_map[major] = {}
-            if minor not in version_map[major]:
-                version_map[major][minor] = []
-            version_map[major][minor].append(patch)
+        """清理逻辑改为基于VERSION文件"""
+        current_version = get_current_version(self.project_root)
+        vs = VersionService.from_version(current_version)
         
-        # 清理逻辑
-        for major in version_map:
-            # 保留最近3个次版本
-            minors = sorted(version_map[major].keys(), reverse=True)[:3]
-            for minor in list(version_map[major].keys()):
-                if minor not in minors:
-                    # 删除该次版本所有文件
-                    self._delete_version_files(f"v{major}.{minor}.*")
-                    del version_map[major][minor]
-            
-            # 每个次版本保留最近2个修订版
-            for minor in minors:
-                patches = sorted(version_map[major][minor], reverse=True)[:2]
-                for patch in list(version_map[major][minor]):
-                    if patch not in patches:
-                        self._delete_version_files(f"v{major}.{minor}.{patch}")
-                        version_map[major][minor].remove(patch)
+        # 根据当前版本计算保留范围
+        retention_policy = {
+            "major": vs.major - 2 if vs.major > 2 else 0,
+            "minor": 3,
+            "patch": 2
+        }
+        self.tracking_svc.clean_old_versions(retention_policy)
 
-    def _generate_new_version(self) -> str:
-        """生成语义化版本号"""
-        last_version = self.tracking_svc.get_latest_version("user_stories")
-        major, minor, patch = map(int, last_version.split('.'))
-        return f"{major}.{minor+1}.0"
+    def _generate_new_version(self, change_type: str) -> str:
+        """完全通过VersionService生成"""
+        return self.version_svc.bump(change_type)
 
     def generate_version_report(self, version: str) -> str:
         """生成版本变更报告"""
@@ -414,4 +370,114 @@ class AICOProjectManager(Role):
             report += f"- {req_id}: {req_info.get('description', '')}\n"
         
         return report
+
+    def _determine_version_change(self) -> str:
+        """根据文档6.1.3判断版本变更类型"""
+        changes = self.tracking_svc.get_pending_changes()
+        
+        if any(c["change_type"] == "架构变更" for c in changes):
+            return "major"
+        elif any(c["change_type"] == "新增功能" for c in changes):
+            return "minor"
+        return "patch"
+
+    def _create_version_dirs(self, version: str):
+        """按文档规范创建版本目录"""
+        version_dirs = [
+            f"docs/requirements/analyzed/{version}",
+            f"docs/ea/biz_arch/{version}",
+            f"docs/ea/tech_arch/{version}",
+            f"docs/design/prd/{version}",
+            f"docs/design/services/product/{version}",
+            f"docs/design/tests/{version}",
+            f"releases/{version}"
+        ]
+        
+        for d in version_dirs:
+            (self.project_root / d).mkdir(parents=True, exist_ok=True)
+
+    def _init_version_documents(self, version: str):
+        """在首个正式版本创建需求文档"""
+        req_dir = self.project_root / f"docs/requirements/analyzed/{version}/req-001"
+        req_dir.mkdir()
+        
+        # 需求文档模板
+        (req_dir / "biz_analysis.md").write_text("# 业务需求分析模板")
+        
+        # 同步创建其他文档模板...
+
+    def _all_requirements_analyzed(self) -> bool:
+        """检查所有需求是否完成分析"""
+        reqs = self.tracking_svc.get_all_requirements()
+        return all(
+            req["ba_status"] == "完成" and req["ea_status"] == "完成"
+            for req in reqs
+        )
+
+    def _get_baseline_reqs(self) -> list:
+        """获取基线需求列表"""
+        return [
+            {
+                "id": req["req_id"],
+                "type": req["type"],
+                "description": req["description"][:100]  # 截断长描述
+            }
+            for req in self.tracking_svc.get_approved_requirements()
+        ]
+
+    def _handle_ba_result(self, msg):
+        """处理BA分析结果（文档6.1.2步骤2）"""
+        self.tracking_svc.update_requirement(
+            req_id=msg.content["req_id"],
+            updates={
+                "ba_status": "完成",
+                "ba_analysis": msg.content["analysis_result"]
+            }
+        )
+        
+    def _handle_ea_result(self, msg):
+        """处理EA分析结果（文档6.1.2步骤3）"""
+        self.tracking_svc.update_requirement(
+            req_id=msg.content["req_id"],
+            updates={
+                "ea_status": "完成",
+                "ea_design": msg.content["design_doc"]
+            }
+        )
+
+    def _scan_unregistered_reqs(self):
+        """扫描未登记的需求文件"""
+        raw_dir = self.project_root / "docs/requirements/raw"
+        tracked_files = self.tracking_svc.get_tracked_files()
+        
+        for req_file in raw_dir.glob("*.md"):
+            if str(req_file.relative_to(raw_dir)) not in tracked_files:
+                logger.warning(f"发现未登记需求文件: {req_file}")
+                self.tracking_svc.add_raw_requirement(
+                    file_path=str(req_file),
+                    description=req_file.read_text()[:100],  # 截取前100字符作为描述
+                    source="file_scan"
+                )
+
+    def _update_task_status(self, task_info: dict):
+        """更新任务状态（文档6.3.2）"""
+        self.tracking_svc.update_task(
+            task_id=task_info["task_id"],
+            updates={
+                "status": task_info["status"],
+                "progress": task_info.get("progress", 0)
+            }
+        )
+
+    async def run(self, *args, **kwargs):
+        """重写run方法以处理初始需求"""
+        # 处理启动参数中的需求
+        if "requirements" in kwargs:
+            for req in kwargs["requirements"]:
+                await self.publish(
+                    AICOEnvironment.MSG_NEW_REQUIREMENT,
+                    content=req
+                )
+        
+        await super().run(*args, **kwargs)
 

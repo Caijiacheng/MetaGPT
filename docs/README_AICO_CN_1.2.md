@@ -38,13 +38,13 @@ AICO-Meta 的落地一般分为三个阶段，便于在不同企业环境中循�
 
 | 角色名称            | 核心业务能力 (Key Abilities)                                                                                                                                                 | 分阶段实现 (P0/P1/P2)                                                                 |
 |---------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------|
-| **项目经理 (PM)**   | - 端到端需求管理（`initProject`/`reviewAllRequirements`）<br>- 迭代计划制定（`planSprintReleases`）<br>- 任务拆解与分配（`assignTasks`）<br>- 项目协调与基线管理（三次Review动作） | **P0**：<br>• 需求→上线基础流程<br>• 三次基线评审<br>**P1**：<br>• 迭代阶段管理<br>**P2**：<br>• 多项目协同            |
-| 需求分析师 (BA)      | - 业务需求解析（`parseRequirement`）<br>- 用户故事拆解<br>- 业务架构维护（`update4ABusiness`）<br>- 需求跟踪矩阵维护                                                                 | **P0**：<br>• 需求矩阵生成<br>• 用户故事初稿<br>**P1**：<br>• 需求变更管理<br>**P2**：<br>• 复杂业务建模              |
-| 产品经理 (PDM)      | - PRD文档编写（`writePRD`）<br>- 验收标准定义<br>- 需求设计阶段协同                                                                                                                                 | **P0**：<br>• PRD初稿生成<br>**P1**：<br>• 多版本迭代<br>**P2**：<br>• 用户反馈闭环                                  |
-| 架构师 (EA)        | - 技术需求解析（`parseTechRequirements`）<br>- 4A架构设计（`update4ATech`）<br>- 架构评审（时序图中设计阶段参与）<br>- 技术方案一致性保障                                                           | **P0**：<br>• 4A架构初稿<br>• 技术需求矩阵<br>**P1**：<br>• 架构评审流程<br>**P2**：<br>• 性能/安全专项优化           |
-| 开发工程师 (DEV)     | - 微服务设计（`writeServiceDesign`）<br>- 代码实现（`writeCode`）<br>- 代码评审（时序图中实现阶段）<br>- 缺陷修复                                                                               | **P0**：<br>• 服务设计文档<br>• 核心功能代码<br>**P1**：<br>• 单测覆盖<br>**P2**：<br>• 持续重构                    |
-| 测试工程师 (QA)      | - 测试用例设计（`writeTestCase`）<br>- 测试执行（`runTestCase`）<br>- 测试报告生成（时序图灰色阶段）                                                                                          | **P0**：<br>• 功能测试用例<br>• 基础测试报告<br>**P1**：<br>• 自动化回归<br>**P2**：<br>• 性能/安全测试              |
-| DevOps 工程师 (DO) | - 构建脚本生成（`prepareBuild`）<br>- 部署脚本生成（`prepareDeployment`）<br>- 环境配置（时序图实现阶段）<br>- CI/CD流水线维护                                                                 | **P0**：<br>• 基础环境搭建<br>• 部署脚本初稿<br>**P1**：<br>• CI/CD流水线<br>**P2**：<br>• 可观测性体系               |
+| **项目经理 (PM)**   | - 端到端需求管理（`initProject`/`updateProjectTracking`）<br>- 需求基线管理（`generateBaselineVersion`/`ReviewAllRequirements`）<br>- 任务拆解与分配（`assignDesignTasks`/`assignImpTasks`）<br>- 变更闭环管理（`reviewProjectChanges`） | **P0**：<br>• 三次基线评审（需求/设计/实现）<br>• 任务状态跟踪<br>**P1**：<br>• 迭代阶段管理<br>**P2**：<br>• 多项目协同            |
+| 需求分析师 (BA)      | - 业务需求解析（`parseBizRequirement`）<br>- 用户故事生成（`update4ABiz`）<br>- 业务架构维护（`update4ABiz`）<br>- 需求状态反馈                                                                 | **P0**：<br>• 需求矩阵生成<br>• 用户故事初稿<br>**P1**：<br>• 需求变更影响分析<br>**P2**：<br>• 复杂业务建模              |
+| 产品经理 (PDM)      | - PRD文档编写（`writePRD`）<br>- 验收标准定义<br>- 需求设计协同（响应`design:writePRD`信号）                                                                                                         | **P0**：<br>• PRD初稿生成<br>**P1**：<br>• 多版本PRD管理<br>**P2**：<br>• 用户反馈闭环                                  |
+| 架构师 (EA)        | - 技术需求解析（`parseTechRequirements`）<br>- 4A架构设计（`update4ATech`）<br>- 技术方案评审（参与`ReviewAllDesigns`）<br>- 技术需求跟踪                                                                 | **P0**：<br>• 4A架构初稿<br>• 技术需求矩阵<br>**P1**：<br>• 架构变更控制<br>**P2**：<br>• 性能/安全专项优化           |
+| 开发工程师 (DEV)     | - 微服务设计（`writeServiceDesign`）<br>- 代码实现（`writeCode`）<br>- 代码评审（参与`ReviewAllImpTasks`）<br>- 缺陷修复                                                                               | **P0**：<br>• 服务设计文档<br>• 核心功能代码<br>**P1**：<br>• 单测覆盖<br>**P2**：<br>• 持续重构                    |
+| 测试工程师 (QA)      | - 测试用例设计（`writeTestCase`）<br>- 测试执行（`runTestCase`）<br>- 测试报告生成（响应`imp:writeTestCase`信号）                                                                                          | **P0**：<br>• 功能测试用例<br>• 基础测试报告<br>**P1**：<br>• 自动化回归<br>**P2**：<br>• 性能/安全测试              |
+| DevOps 工程师 (DO) | - 环境配置（响应`imp:writeDeploy`信号）<br>- 部署脚本生成（`writeDeploy`）<br>- 构建脚本生成（`prepareBuild`）<br>- 部署验证                                                                 | **P0**：<br>• 基础环境搭建<br>• 部署脚本初稿<br>**P1**：<br>• CI/CD流水线<br>**P2**：<br>• 可观测性体系               |
 
 
 
@@ -111,15 +111,15 @@ sequenceDiagram
     PM->>PM: generateBaselineVersion()，设定基线版本version
     PM->>PM: updateProjectTacking()，更新「需求管理」状态
     
-    PM->>BA: publish(requirment:bizArch,version)，提交业务架构分析
+    PM->>BA: publish(requirment:bizArchAnalysis,version)，提交业务架构分析
     BA->>AI: update4ABiz()，调用AI引擎，协助更新业务架构和用户故事
     AI-->>BA: 输出业务架构和用户故事
-    BA-->>PM: publish(requirment:bizArchDone)，需求解析结束
+    BA-->>PM: publish(requirment:bizArchAnalysisDone)，需求解析结束
   
-    PM->>EA: publish(requirment:techArch,version)，提交技术架构分析
+    PM->>EA: publish(requirment:techArchAnalysis,version)，提交技术架构分析
     EA->>AI: update4ATech()，调用AI引擎，协助更新技术架构（需要结合业务架构）
     AI-->>EA: 输出4A架构中的应用架构、数据架构、技术架构
-    EA-->>PM: publish(requirment:techArchDone)，需求解析结束
+    EA-->>PM: publish(requirment:techArchAnalysisDone)，需求解析结束
     PM->>PM: updateProjectTacking()，更新「需求管理」状态
 
     PM->>AI: ReviewAllRequirements()，人工复核修正 + 文档AI一致性检查
@@ -227,68 +227,93 @@ sequenceDiagram
 #### 项目经理 (PM)
 - **Action**: 
   - `initProject()`：初始化项目环境
-  - `updateProjectTracking(data)`：更新ProjectTracking跟踪表
+  - `generateBaselineVersion()`：生成需求基线版本
+  - `updateProjectTracking(data)`：更新项目跟踪表
 - **Publish**: 
-  - `{project:ready}` 项目就绪信号
-  - `{requirement:bizParse}` 触发业务需求分析
-  - `{requirement:techParse}` 触发技术需求分析
+  - `project:ready` 项目就绪信号
+  - `requirment:bizParse` 触发业务需求分析
+  - `requirment:techParse` 触发技术需求分析
+  - `requirment:bizArchAnalysis` 触发业务架构分析
+  - `requirment:techArchAnalysis` 触发技术架构分析
 
 #### 需求分析师 (BA)
-- **Observe**: `{requirement:bizParse}`
-- **Publish**: `{requirement:bizParseDone}` 业务需求解析完成信号
+- **Observe**: `requirment:bizParse`, `requirment:bizArchAnalysis`
+- **Action**:
+  - `parseBizRequirement()`：解析原始业务需求
+  - `update4ABiz()`：更新业务架构和用户故事
+- **Publish**: 
+  - `requirment:bizParseDone` 业务需求解析完成
+  - `requirment:bizArchAnalysisDone` 业务架构分析完成
 
 #### 架构师 (EA)
-- **Observe**: `{requirement:techParse}`
-- **Publish**: `{requirement:techParseDone}` 技术需求解析完成信号
+- **Observe**: `requirment:techParse`, `requirment:techArchAnalysis`
+- **Action**:
+  - `parseTechRequirements()`：解析技术需求
+  - `update4ATech()`：更新技术架构
+- **Publish**: 
+  - `requirment:techParseDone` 技术需求解析完成
+  - `requirment:techArchAnalysisDone` 技术架构分析完成
 
 ### 6.2 需求设计阶段角色
 
 #### 项目经理 (PM)
 - **Action**: 
   - `assignDesignTasks()`：分配设计任务
-  - `updateProjectTracking(data)`：更新ProjectTracking跟踪表
+  - `ReviewAllDesigns()`：设计文档评审
 - **Publish**:
-  - `{design:writePRD}` 触发PRD编写
-  - `{design:writeServiceDesign}` 触发服务设计
-  - `{design:writeTestCase}` 触发测试用例设计
+  - `design:writePRD` 触发PRD编写
+  - `design:writeServiceDesign` 触发服务设计
+  - `design:writeTestCase` 触发测试用例设计
 
 #### 产品经理 (PDM)
-- **Action**: `writePRD()`：编写产品需求，包含功能描述、交互设计、验收标准
-- **Observe**: `{需求详细设计}`触发PRD编写
-- **Publish**: `{PRD}`产品需求文档
+- **Observe**: `design:writePRD`
+- **Action**: `writePRD()`：生成产品需求文档
+- **Publish**: `design:writePRDDone` PRD文档完成
 
 #### 开发工程师 (DEV)
-- **Action**: `writeServiceDesign()`：微服务设计，包含接口设计、数据模型设计
-- **Observe**: `{需求详细设计}`触发服务设计
-- **Publish**: `{服务设计文档}`服务设计方案
+- **Observe**: `design:writeServiceDesign`
+- **Action**: `writeServiceDesign()`：生成微服务设计文档
+- **Publish**: `design:writeServiceDesignDone` 服务设计完成
+
+#### 测试工程师 (QA)
+- **Observe**: `design:writeTestCase`
+- **Action**: `writeTestCase()`：生成测试用例初稿
+- **Publish**: `design:writeTestCaseDone` 测试用例设计完成
 
 ### 6.3 需求实现阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `assignImpTasks()`：任务分配与跟踪，包含工作量评估、进度监控
-- **Publish**: `{tasks:build}`, `{tasks:Dev}`, `{tasks:deploy}`任务清单
+- **Action**: 
+  - `assignImpTasks()`：分配实现任务
+  - `ReviewAllImpTasks()`：实现成果评审
+- **Publish**: 
+  - `imp:writeDeploy` 触发部署脚本编写
+  - `imp:writeCode` 触发代码开发
+  - `imp:writeTestCase` 触发测试用例执行
 
 #### DevOps工程师 (DO)
-- **Action**: `prepareDeploy()`：部署准备，包含环境配置、部署脚本编写
-- **Observe**: `{tasks:deploy}`部署任务
-- **Publish**: `{部署脚本}`部署配置
+- **Observe**: `imp:writeDeploy`
+- **Action**: `writeDeploy()`：生成部署脚本
+- **Publish**: `imp:writeDeployDone` 部署脚本完成
 
 #### 开发工程师 (DEV)
-- **Action**: `writeCode()`：代码开发，包含功能实现、单元测试编写
-- **Observe**: `{tasks:Dev}`开发任务
-- **Publish**: `{可测试版本}`代码提交
+- **Observe**: `imp:writeCode`
+- **Action**: `writeCode()`：生成功能代码
+- **Publish**: `imp:writeCodeDone` 代码开发完成
 
 #### 测试工程师 (QA)
-- **Action**: `writeTestCase()`：测试用例编写，包含功能测试、接口测试
-- **Observe**: `{tasks:Test}`测试任务
-- **Publish**: `{test:QA}`测试报告
+- **Observe**: `imp:writeTestCase`
+- **Action**: 
+  - `runTestCase()`：执行测试用例
+  - `generateTestReport()`：生成测试报告
+- **Publish**: `imp:writeTestCaseDone` 测试执行完成
 
 ### 6.4 迭代收尾阶段角色
 
 #### 项目经理 (PM)
-- **Action**: `reviewProjectChanges()`：变更审查，包含代码变更分析、文档更新检查
-- **Observe**: 所有实现产物
-- **Publish**: `{上线完成}`变更日志
+- **Action**: `reviewProjectChanges()`：分析版本变更
+- **Publish**: `project:IterDone` 迭代完成信号
+- **Observe**: 所有实现阶段的完成信号
 
 ---
 
@@ -317,181 +342,5 @@ sequenceDiagram
 
 ---
 
-## 8. AICO-Meta 基于 MetaGPT 的实现清单
 
-### 8.1 P0 阶段（最小可用闭环）
 
-1. **核心角色扩展**
-
-   - 在 MetaGPT 中，为 PM、BA、PDM、EA、DEV、QA、DO 定义各自 `Role` 类；
-   - 实现最基础的 Action (如 `initProject()`, `parseBizRequirement()`, `writeServiceDesign()`, `writeCode()`, etc.)。
-
-2. **消息机制**
-
-   - 建立 `ENV` 作为消息总线；
-   - 角色完成 Action 后 `publish(...)`，其它角色 `observe(...)` 获取并处理。
-
-3. **文档模板**
-
-   - ReqTracking.xlsx, TaskTracking.xlsx, PRD, EA-Design.md, ServiceX-Design.md, Testcase-Design.md, Deployment.md 等，均可在角色执行 Action 时自动生成或更新。
-   - 在"AI+人机协同"模式下，可由 AI 先生成初稿，人工再修订并发布最终版。
-
-4. **最小工作流**
-
-   - 需求收集 → 用户故事 → 架构设计 → 微服务设计 → 开发 → 测试 → 部署
-   - 对应的关键角色 SOP 已在前文列出。
-
-### 8.2 后续阶段（P1 / P2）
-
-1. **P1：增强**
-
-   - 项目阶段管理 (`setPhases()`)、自动化评审、CI/CD、自动化回归测试等
-   - 让更多日常操作自动化，减少人工干预。
-
-2. **P2：高级**
-
-   - 性能/安全测试、容器化、监控告警、一键回滚、用户反馈分析等
-   - 多团队协作、多项目管理
-   - 进一步提高 AI 自动化水平，如自动合并代码、自动回滚等。
-
----
-
-## 9. 改进与后续扩展
-
-### 9.1 中间件需求与 DevOps 更新
-
-- 为了更好地跟踪中间件变更（如新增 Redis、MQ、ES 等），可在 `TaskTracking.xlsx` 中建立"**环境变更**"或"**中间件更新**"类型的任务。
-- 流程示例：
-  1. EA 在 4A 架构评审中提出或更新中间件需求；
-  2. PM 将该需求转为"环境变更任务"分配给 DO；
-  3. DO 更新 Docker Compose、CI/CD 脚本；
-  4. QA 执行环境验证测试（可加入到测试用例或单独一份部署验证脚本中）；
-  5. 更新完毕后在 `TaskTracking.xlsx` 中标记完成。
-
-### 9.2 各阶段产出物规范
-
-以下为各常见文档及其建议内容，尤其针对 **EA-Design.md** 与 **Service-Level-Design** 做了更详细说明。
-
-1. **ReqTracking.xlsx**
-
-   - 记录业务/技术需求，如需求ID、需求类型(业务/技术)、优先级、状态(新建、分析中、已完成等)、对应用户故事、备注等。
-   - BA、EA 分别维护业务/技术需求，并在需求分析后更新状态。
-
-2. **TaskTracking.xlsx**
-
-   - 列出具体任务，如 任务ID、任务类型(开发、测试、环境变更等)、负责人、状态(未开始/进行中/已完成)、起止时间、关联用户故事ID 等。
-   - 由 PM 创建并跟踪，DEV/QA/DO 在此更新进度或完成度。
-
-3. **PRD (Product Requirement Document)**
-
-   - Typically 由 PDM 编写，主要涵盖：
-     - 背景和目标
-     - 用户故事 (BA 提供)
-     - 功能清单/验收标准
-     - 产品原型(如果需要)
-   - 在 P1/P2 时可扩展多轮迭代/版本管理。
-
-4. **EA-Design.md（系统级/跨微服务的高阶设计文档）**
-
-   - **整体微服务拓扑图**：罗列所有服务与其职责边界、接口调用关系、数据流走向。
-   - **关键非功能特性**：高可用、容灾、弹性伸缩、网关/负载均衡方案等。
-   - **技术框架选型**：语言、通信协议（REST/gRPC）、中间件(缓存/队列)等。
-   - **4A 架构**：
-     - 业务架构(BA 提供/确认整体流程)
-     - 数据架构(数据库拆分、中心 DB vs. 各微服务独立 DB)
-     - 技术架构(服务框架、通信模式、消息队列、CI/CD 等)
-     - 应用架构(服务边界、API 级别描述、安全/权限模型)
-   - **目标**：让团队对整个系统的全局宏观结构一目了然。
-
-5. **Service-Level-Design (如 ********************************`ServiceX-Design.md`********************************)**
-
-   - **各微服务的详细设计**，由 DEV 或对应服务负责人编写、EA 评审：
-     - **功能/模块拆分**：该服务具体提供哪些业务功能？
-     - **数据库设计**：表结构、索引、分区策略(若有)等。
-     - **接口定义**：对外暴露 API (REST/gRPC)、消息格式、错误码等。
-     - **内部业务流程**：核心逻辑、状态机、异常处理；是否需要缓存/熔断/重试机制。
-     - **性能/故障考虑**：是否需负载均衡、限流、日志监控等。
-   - **目标**：对每个微服务的内部实现细节进行更深入的设计和记录，保持与 EA-Design.md 的整体架构一致。
-
-6. **Testcase-Design.md**
-
-   - QA 编写：列出功能/回归/压力等测试用例；描述用例步骤、期望结果、实际结果。
-   - 在 P1/P2 可扩展自动化测试脚本、覆盖率分析等。
-
-7. **Deployment.md**
-
-   - 由 DO 编写：记录环境拓扑、Docker Compose 示例、CI/CD 流程说明。
-   - 如果架构变更（新增 Redis、MQ），也要同步更新本文档，便于后续维护。
-
-### 9.3 迭代管理 & 敏捷实践
-
-- 在 P0 中主要跑通最小闭环；
-- P1/P2 若采用 Scrum，可加上 Sprint 规划、看板、燃尽图、每日站会、迭代回顾等；
-- 用户故事/任务可与 Jira/Trello/Confluence 等工具结合，进行 Backlog 管理和持续迭代。
-
-### 9.4 在 MetaGPT 中的执行：API/消息结构 & 函数签名
-
-- **示例函数签名更新**：
-
-  ```python
-  class ProjectManager(Role):
-      def init_project(self, project_info: dict) -> None:
-          """
-          Action: 初始化或更新项目工程，发布就绪信号到 ENV
-          :param project_info: 包含项目名称、范围、技术栈等信息
-          :return: None
-          """
-          # 存在项目时执行更新逻辑
-          if self.env.exist("project"):
-              self._update_project(project_info)
-          else:
-              self._create_project(project_info)
-          self.publish("project:ready", project_info)
-  ```
-
-- **基础概念**：
-
-  - `ENV`：一个全局消息总线或共享上下文；
-  - 每个 `Role` 可以在自己的类中定义 Action 方法，并通过 `observe`/`publish` 函数与 `ENV` 交互；
-
-- **其余角色**：
-
-  - 在自己的方法中进行 `observe`(监听)、`publish`(输出)；
-  - 通过**文档生成/更新**API（如 \`generate\_doc()）来维护 ReqTracking.xlsx、EA-Design.md 等；
-  - 在需要时可调用 AI 做"自动补全/生成"，再由人工或其他角色评审确认。
-
-- **消息结构**：
-
-  - 通常可采用 `{"type": "requirement", "payload": {...}}` 的 JSON 格式，也可更复杂；
-  - 在 P0 阶段不必过度复杂，只需确认每种类型(`requirement`, `PRD`, `tasks`, `可测试版本`等) 对应的数据结构即可。
-
----
-
-## 10. 参考资料
-
-- [MetaGPT 官方文档](https://metagpt.readthedocs.io/en/latest/)
-- [MetaGPT 示例项目](https://github.com/OpenBMB/MetaGPT)
-- [MetaGPT 源码](https://github.com/OpenBMB/MetaGPT)
-
----
-
-## 11. 端到端一致性复核（可选增强）
-
-在完成 **需求分析阶段** 与 **需求实现阶段** 后，为了确保**文档与代码**不存在偏差，可让 AI 对比：
-
-1. **Git 提交记录**（代码改动）与**最终文档**(PRD, EA-Design, Service-Level-Design 等)之间的差异；
-2. 若 AI 发现明显冲突或未更新文档之处，则输出一个差异报告；
-3. 由 **PM/EA/DEV 等**进行人工决策，**是否**要修订文档或进行代码回退/调整；
-4. 形成最终一致的 **上线基线**。
-
-在 P0 初期，此步骤可采用**人工**查看或简单脚本进行；在 P1/P2 阶段再与更多自动化工具（如 CI/CD、变更审计）结合，构建**更高自动化**的一致性审查流程。
-
----
-
-### 规范类型
-| 规范类型         | 全局规范路径              | 项目规范路径          |
-|------------------|--------------------------|---------------------|
-| 架构设计规范     | {global_spec}/ea_design_spec.md | {project_root}/specs/ea_design_spec.md |
-| 项目跟踪规范     | {global_spec}/project_tracking_spec.md | {project_root}/specs/project_tracking_spec.md |
-
----
