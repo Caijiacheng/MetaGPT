@@ -320,25 +320,43 @@ sequenceDiagram
 ## 7. P0 阶段 SOP 示范（流程细化）
 
 1. **需求收集阶段**
-   - PM：执行`initProject()` → 发布`{project:ready}`
-   - BA：接收`{requirement:bizParse}` → 发布`{requirement:bizParseDone}`
-   - EA：接收`{requirement:techParse}` → 发布`{requirement:techParseDone}`
-   - PM：执行`trackRequirement()`更新跟踪表
+   - PM：执行`initProject()` → 发布`project:ready`
+   - PM：发布`requirment:bizParse`触发业务需求分析
+   - BA：执行`parseBizRequirement()` → 发布`requirment:bizParseDone`
+   - PM：发布`requirment:techParse`触发技术需求分析 
+   - EA：执行`parseTechRequirements()` → 发布`requirment:techParseDone`
+   - PM：执行`generateBaselineVersion()`生成需求基线
+   - PM：发布`requirment:bizArchAnalysis`触发业务架构分析
+   - BA：执行`update4ABiz()` → 发布`requirment:bizArchAnalysisDone`
+   - PM：发布`requirment:techArchAnalysis`触发技术架构分析
+   - EA：执行`update4ATech()` → 发布`requirment:techArchAnalysisDone`
+   - PM：执行`ReviewAllRequirements()`完成需求基线
 
 2. **需求设计阶段**
-   - PM：发布`{design:writePRD}`/`{design:writeServiceDesign}`/`{design:writeTestCase}`
-   - PDM/DEV/QA：完成设计后发布完成信号（如`{design:writePRDDone}`）
-   - PM：执行`updateProjectTracking()`更新「需求管理」状态
+   - PM：执行`assignDesignTasks()`发布设计任务：
+     - 发布`design:writePRD`触发PRD编写
+     - 发布`design:writeServiceDesign`触发服务设计
+     - 发布`design:writeTestCase`触发测试设计
+   - PDM：执行`writePRD()` → 发布`design:writePRDDone`
+   - DEV：执行`writeServiceDesign()` → 发布`design:writeServiceDesignDone` 
+   - QA：执行`writeTestCase()` → 发布`design:writeTestCaseDone`
+   - PM：执行`ReviewAllDesigns()`完成设计基线
 
 3. **需求实现阶段**
-   - PM：执行`assignImpTasks()`发布`{tasks:build}`,`{tasks:Dev}`,`{tasks:deploy}`
-   - DO/DEV/QA：并行处理构建/编码/测试 → 发布实现产物
-   - PM：执行`ReviewAllTasks()`完成代码基线
+   - PM：执行`assignImpTasks()`发布实现任务：
+     - 发布`imp:writeDeploy`触发部署准备
+     - 发布`imp:writeCode`触发代码开发
+     - 发布`imp:writeTestCase`触发测试执行
+   - DO：执行`writeDeploy()` → 发布`imp:writeDeployDone`
+   - DEV：执行`writeCode()` → 发布`imp:writeCodeDone`
+   - QA：执行`runTestCase()` → 发布`imp:writeTestCaseDone`
+   - PM：执行`ReviewAllImpTasks()`完成实现基线
 
 4. **迭代收尾**
-   - PM：调用`commitChanges()`生成变更日志
-   - AI：自动执行文档代码一致性检查
-   - PM：人工确认后发布`{上线完成}`
+   - PM：执行`reviewProjectChanges()`分析版本差异
+   - AI：执行文档代码一致性检查 → 生成差异报告
+   - PM：人工确认后发布`project:IterDone`
+   - DO：执行部署验证 → 更新部署状态
 
 ---
 

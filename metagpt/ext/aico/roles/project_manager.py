@@ -4,14 +4,6 @@
 @Time    : 2023/12/14
 @Author  : Jiacheng Cai
 @File    : project_manager.py
-说明:
-  项目经理(PM)角色职责:
-  1. 初始化项目,生成项目基本信息
-  2. 跟踪原始需求素材的解析状态
-  3. 复核业务需求和技术需求,形成需求基线
-  4. 制定迭代计划,分配任务
-  5. 复核设计文档,确保一致性
-  6. 复核任务分解,确保可执行性
 """
 from typing import Dict, List
 from pathlib import Path
@@ -150,51 +142,75 @@ class AICOProjectManager(Role):
 
     async def _process_requirements(self):
         """严格遵循文档6.1节的时序"""
-        # 阶段1：需求收集（文档6.1.1）
-        await self._collect_requirements()
+        # 阶段1：原始需求解析
+        await self._parse_raw_requirements()
         
-        # 阶段2：需求分析（文档6.1.2）
-        await self._analyze_requirements()
+        # 阶段2：架构分析
+        await self._process_arch_analysis()
         
-        # 阶段3：需求基线确认（文档6.1.3）
-        await self._confirm_baseline()
+        # 阶段3：基线确认
+        await self._confirm_requirement_baseline()
 
-    async def _collect_requirements(self):
-        """需求收集阶段（文档6.1.1）"""
+    async def _parse_raw_requirements(self):
+        """对应文档6.1.1节需求解析流程"""
+        # 处理原始需求输入
+        await self._collect_raw_requirements()
+        
+        # 发布解析信号（不携带版本号）
+        await self.publish("requirment:bizParse", {
+            "requirements": self._get_raw_requirements()
+        })
+        await self.publish("requirment:techParse", {
+            "requirements": self._get_tech_requirements()
+        })
+        
+        # 等待解析完成
+        await self._wait_for_parsing_complete()
+        
+        # 生成新版本（文档6.1.3节）
+        new_version = self.version_svc.bump("minor")
+        self.current_baseline_version = new_version
+        self._create_version_dirs(new_version)
+        
+        # 更新跟踪表关联新版本
+        self.tracking_svc.update_requirements_version(
+            req_ids=[req["req_id"] for req in self._get_all_parsed_requirements()],
+            version=new_version
+        )
+
+    async def _collect_raw_requirements(self):
+        """严格遵循文档5.2节原始需求跟踪流程"""
         # 处理启动参数传入的需求
         if self.rc.env.requirements:
             for req in self.rc.env.requirements:
                 await self._process_input_requirement(req)
         
-        # 监听外部输入（文件/API等）
-        async for msg in self.observe(AICOEnvironment.MSG_NEW_REQUIREMENT):
-            await self._process_input_requirement(msg.content)
-        
-        # 扫描未登记需求
+        # 扫描未登记需求（文档5.2节步骤4）
         self._scan_unregistered_reqs()
 
     async def _process_input_requirement(self, req_input: dict):
-        """统一处理各种输入方式的需求"""
+        """统一处理各种输入方式的需求（文档5.2节步骤2）"""
         # 处理文件输入
         if "file_path" in req_input:
-            self._save_requirement_file(req_input["file_path"])
-            self._add_to_tracking(req_input)
+            saved_path = self._save_requirement_file(req_input["file_path"])
+            self._add_to_tracking(saved_path, req_input)
         # 处理文本输入
         elif "text" in req_input:
-            req_file = self._save_requirement_text(req_input["text"])
-            self._add_to_tracking({"file_path": str(req_file)})
+            saved_path = self._save_requirement_text(req_input["text"])
+            self._add_to_tracking(saved_path, req_input)
         else:
             logger.error("无效的需求输入格式")
 
-    def _save_requirement_file(self, file_path: str):
-        """保存需求文件到raw目录"""
-        src = Path(file_path)
+    def _save_requirement_file(self, src_path: str) -> Path:
+        """保存需求文件到raw目录（文档5.2节步骤3）"""
+        src = Path(src_path)
         dest = self.project_root / "docs/requirements/raw" / src.name
         shutil.copy2(src, dest)
         logger.info(f"需求文件已保存: {dest}")
+        return dest
 
     def _save_requirement_text(self, text: str) -> Path:
-        """保存文本需求到文件"""
+        """保存文本需求到文件（文档5.2节步骤3）"""
         req_dir = self.project_root / "docs/requirements/raw"
         req_dir.mkdir(exist_ok=True)
         
@@ -203,94 +219,59 @@ class AICOProjectManager(Role):
         req_file.write_text(text)
         return req_file
 
-    def _add_to_tracking(self, req_data: dict):
-        """添加需求到跟踪表"""
+    def _add_to_tracking(self, file_path: Path, req_data: dict):
+        """添加需求到跟踪表（文档5.2节步骤5）"""
+        relative_path = str(file_path.relative_to(self.project_root))
+        
         self.tracking_svc.add_raw_requirement(
-            file_path=req_data["file_path"],
+            file_path=relative_path,
             description=req_data.get("description", ""),
-            source=req_data.get("source", "manual")
+            source=req_data.get("source", "manual"),
+            req_type=req_data.get("type", "business")  # 区分业务/技术需求
         )
+        logger.info(f"需求已登记到跟踪表: {file_path.name}")
 
-    async def _analyze_requirements(self):
-        """需求分析阶段（文档6.1.2）"""
-        # 分发待分析需求（BA+EA并行）
-        pending_reqs = self.tracking_svc.get_pending_requirements()
-        for req in pending_reqs:
-            await self._dispatch_analysis(req)
-
-        # 监听分析结果（严格按顺序）
-        async for msg in self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE):
-            self._handle_ba_result(msg)
-        
-        async for msg in self.observe(AICOEnvironment.MSG_EA_ANALYSIS_DONE): 
-            self._handle_ea_result(msg)
-
-    async def _dispatch_analysis(self, req: dict):
-        """分发需求分析任务（文档6.1.2步骤1）"""
-        # 发布BA分析任务
-        await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_STARTED, {
-            "req_id": req["req_id"],
-            "content": req["description"]
+    async def _process_arch_analysis(self):
+        """对应文档6.1.2节架构分析流程"""
+        # 发布业务架构分析
+        await self.publish("requirment:bizArchAnalysis", {
+            "version": self.current_baseline_version,
+            "biz_requirements": self._get_parsed_biz_reqs()
         })
         
-        # 发布EA分析任务
-        await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_STARTED, {
-            "req_id": req["req_id"],
-            "tech_scope": req.get("tech_scope", "")
+        # 发布技术架构分析 
+        await self.publish("requirment:techArchAnalysis", {
+            "version": self.current_baseline_version,
+            "tech_requirements": self._get_parsed_tech_reqs()
         })
+        
+        # 等待架构分析完成
+        await self._wait_for_arch_analysis_complete()
 
-    async def _confirm_baseline(self):
-        """需求基线确认（文档6.1.3）"""
-        # 仅当所有需求分析完成
-        if self._all_requirements_analyzed():
-            # 生成新版本（严格在最后阶段）
-            change_type = self._determine_version_change()
-            new_version = self.version_svc.bump(change_type)
-            
-            # 创建版本目录结构
-            self._create_version_dirs(new_version)
-            
-            # 发布基线确认事件
-            await self.publish(AICOEnvironment.MSG_REQ_BASELINE_CONFIRMED, {
+    async def _confirm_requirement_baseline(self):
+        """对应文档6.1.3节基线确认流程"""
+        # 生成基线版本（严格在最后阶段）
+        new_version = self.version_svc.bump("minor")  # 需求变更默认minor版本
+        
+        # 执行需求评审
+        review_result = await self.rc.run(ReviewAllRequirements().run(
+            context={
                 "version": new_version,
-                "requirements": self._get_baseline_reqs()
-            })
-
-    async def _handle_new_requirement(self, msg):
-        """处理新输入的原始需求"""
-        # 保存到项目目录（根据文档5.2节）
-        req_file = self._save_requirement_file(msg.content)
+                "requirements": self._get_all_parsed_requirements()
+            }
+        ))
         
-        # 登记到跟踪表（文档6.1.1节）
-        self._add_raw_requirement({
-            "file_path": str(req_file.relative_to(self.project_root)),
-            "type": msg.content.get("type", "business"),
-            "comment": msg.content.get("comment", "")
-        })
-        
-        logger.info(f"新增需求登记完成：{req_file.name}")
-
-    def _save_requirement_file(self, req_data: dict) -> Path:
-        """保存需求文件到统一目录"""
-        reqs_dir = self.project_root / "docs/requirements/raw"
-        reqs_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 生成文件名（时间戳+类型）
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename = f"REQ_{timestamp}_{req_data['type']}.txt"
-        req_file = reqs_dir / filename
-        req_file.write_text(json.dumps(req_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        return req_file
-
-    def _add_raw_requirement(self, req_info: dict):
-        """添加原始需求记录（使用服务类）"""
-        self.tracking_svc.add_raw_requirement(
-            file_path=req_info["file_path"],
-            req_type=req_info["type"],
-            status="待分析",
-            comment=req_info.get("comment", "")
+        # 更新跟踪表状态
+        self.tracking_svc.mark_requirements_as_baselined(
+            version=new_version,
+            req_ids=[req["id"] for req in review_result.instruct_content["approved_reqs"]]
         )
-        self.tracking_svc.save()
+        
+        # 发布基线确认事件
+        await self.publish("project:req_baseline_confirmed", {
+            "version": new_version,
+            "approved_reqs": review_result.instruct_content["approved_reqs"]
+        })
 
     async def _process_design(self):
         """处理设计阶段"""
@@ -446,18 +427,17 @@ class AICOProjectManager(Role):
         )
 
     def _scan_unregistered_reqs(self):
-        """扫描未登记的需求文件"""
+        """扫描未登记需求（文档5.2节步骤4）"""
         raw_dir = self.project_root / "docs/requirements/raw"
         tracked_files = self.tracking_svc.get_tracked_files()
         
         for req_file in raw_dir.glob("*.md"):
             if str(req_file.relative_to(raw_dir)) not in tracked_files:
                 logger.warning(f"发现未登记需求文件: {req_file}")
-                self.tracking_svc.add_raw_requirement(
-                    file_path=str(req_file),
-                    description=req_file.read_text()[:100],  # 截取前100字符作为描述
-                    source="file_scan"
-                )
+                self._add_to_tracking(req_file, {
+                    "description": req_file.read_text()[:100],
+                    "source": "file_scan"
+                })
 
     def _update_task_status(self, task_info: dict):
         """更新任务状态（文档6.3.2）"""
@@ -469,15 +449,4 @@ class AICOProjectManager(Role):
             }
         )
 
-    async def run(self, *args, **kwargs):
-        """重写run方法以处理初始需求"""
-        # 处理启动参数中的需求
-        if "requirements" in kwargs:
-            for req in kwargs["requirements"]:
-                await self.publish(
-                    AICOEnvironment.MSG_NEW_REQUIREMENT,
-                    content=req
-                )
-        
-        await super().run(*args, **kwargs)
 
