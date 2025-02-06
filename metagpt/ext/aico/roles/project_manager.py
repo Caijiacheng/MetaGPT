@@ -5,25 +5,19 @@
 @Author  : Jiacheng Cai
 @File    : project_manager.py
 """
-from typing import Dict, List
 from pathlib import Path
-import json
+
 from datetime import datetime
-from openpyxl import load_workbook, Workbook
 from metagpt.roles import Role
-from metagpt.actions import ActionOutput
-from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.pm_action import (
     ReviewRequirement, ReviewDesign, ReviewAllRequirements
 )
-from metagpt.utils.common import format_message
 import logging
 from metagpt.ext.aico.config import config
 import shutil
-import asyncio
-from ..services.project_tracking_service import ProjectTrackingService, TrackingSheet, ColumnIndex
+from ..services.project_tracking_service import ProjectTrackingService
 from ..services.version_service import VersionService
-from ..services.version_service import get_current_version, update_version_file
+from ..services.version_service import get_current_version
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +171,11 @@ class AICOProjectManager(Role):
             req_ids=[req["req_id"] for req in self._get_all_parsed_requirements()],
             version=new_version
         )
+        # 调用 update_raw_requirement_status()
+        self.tracking_svc.update_raw_requirement_status(
+            file_path=req_file,
+            status="parsed_by_ba" if is_biz else "parsed_by_ea"
+        )
 
     async def _collect_raw_requirements(self):
         """严格遵循文档5.2节原始需求跟踪流程"""
@@ -308,7 +307,19 @@ class AICOProjectManager(Role):
         # 监听任务相关消息并更新跟踪表
         async for msg in self.observe("task_update"):
             self._update_task_status(msg.content)
-            
+            if msg.content.get("artifacts"):
+                self.tracking_svc.update_task_artifacts(
+                    task_id=msg.content["task_id"],
+                    artifacts=msg.content["artifacts"]
+                )
+
+        async for msg in self.observe("task_done"):
+            if msg.content.get("artifacts"):
+                self.tracking_svc.update_task_artifacts(
+                    msg.content["task_id"],
+                    msg.content["artifacts"]
+                )
+
     def _validate_tracking_file(self) -> bool:
         """校验跟踪表结构（改为通过服务类）"""
         try:
@@ -365,6 +376,10 @@ class AICOProjectManager(Role):
         for req_id in target["related_reqs"]:
             req_info = self.tracking_svc.get_requirement_info(req_id)
             report += f"- {req_id}: {req_info.get('description', '')}\n"
+            
+            req_status = self.tracking_svc.get_requirement_status(req_id)
+            if req_status != "评审通过":
+                logger.warning(f"需求 {req_id} 状态异常")
         
         return report
 
@@ -426,10 +441,8 @@ class AICOProjectManager(Role):
         """处理BA分析结果（文档6.1.2步骤2）"""
         self.tracking_svc.update_requirement(
             req_id=msg.content["req_id"],
-            updates={
-                "ba_status": "完成",
-                "ba_analysis": msg.content["analysis_result"]
-            }
+            ba_status="完成",
+            ba_analysis=msg.content["analysis_result"]
         )
         
     def _handle_ea_result(self, msg):
@@ -464,5 +477,51 @@ class AICOProjectManager(Role):
                 "progress": task_info.get("progress", 0)
             }
         )
+
+    async def track_design_baseline(self):
+        """跟踪设计基线（对应文档6.2节）"""
+        self.tracking_svc.mark_baseline("design", version)  # 设计基线确认
+        self.tracking_svc.update_design_status(req_id, "基线化")  # 单个需求设计状态更新
+
+    async def handle_change_request(self, change_data: dict):
+        """处理变更请求（对应文档7章）"""
+        # 创建变更记录
+        change_id = self.tracking_svc.add_change(
+            change_type=change_data["type"],
+            description=change_data["reason"],
+            impact_analysis=change_data.get("impact")
+        )
+        
+        # 发布变更审批事件
+        await self.publish("project:change_review", {
+            "change_id": change_id,
+            "details": change_data
+        })
+        
+        # 监听审批结果
+        result = await self.observe("project:change_approved", timeout=3600)
+        if result and result.content["approved"]:
+            # 创建变更实施任务
+            task_id = self._create_change_tasks(change_id)
+            return {"status": "approved", "task_id": task_id}
+        return {"status": "rejected"}
+
+    async def handle_change_request(self, change_data: dict):
+        change_id = self.tracking_svc.add_change(...)  # 创建变更记录
+        # 在审批通过后
+        self.tracking_svc.update_change_status(change_id, "approved")
+
+    def _create_change_tasks(self, change_id):
+        # 调用现有任务创建方法时补充变更关联
+        task_data = {
+            "related_change_id": change_id,  # 新增字段
+            "artifacts": ["docs/changes/CHG-001.md"]  # 变更文档
+        }
+        self.tracking_svc.add_task(task_data)
+
+    async def _confirm_code_baseline(self):
+        code_req_ids = [...]  # 获取通过评审的需求ID
+        self.tracking_svc.mark_baseline("code", self.current_version, code_req_ids)
+        await self.publish("project:code_baseline_confirmed", {"version": self.current_version})
 
 

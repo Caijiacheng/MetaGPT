@@ -157,6 +157,18 @@ class ProjectTrackingService:
         ]
         ws.append(new_row)
 
+    def update_user_story_status(self, story_id: str, status: str):
+        """更新用户故事状态"""
+        ws = self.wb[SheetType.USER_STORY.value.name]
+        cols = SheetType.USER_STORY.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            if str(row[cols.STORY_ID.value].value) == story_id:
+                row[cols.STATUS.value].value = status
+                self.wb.save(self.file_path)
+                return True
+        return False
+
     def add_task(self, task_data: dict):
         """添加任务记录"""
         ws = self.wb[SheetType.TASK_TRACKING.value.name]
@@ -384,4 +396,103 @@ class ProjectTrackingService:
         """校验原始需求记录完整性（文档5.2节）"""
         required_fields = ["file_path", "description", "source"]
         return all(field in req_data for field in required_fields)
+
+    def add_change(self, change_data: dict) -> str:
+        """添加变更记录"""
+        ws = self.wb[SheetType.CHANGE_MGMT.value.name]
+        cols = SheetType.CHANGE_MGMT.value.columns
+        
+        change_id = f"CHG-{ws.max_row:03d}"
+        ws.append([
+            change_id,
+            change_data.get("related_req_id"),
+            change_data.get("change_type"),
+            change_data.get("description"),
+            change_data.get("impact_analysis"),
+            f"{change_data.get('submitter')}/{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "待审批",
+            "未开始",
+            change_data.get("baseline_impact"),
+            "",
+            None
+        ])
+        self.wb.save(self.file_path)
+        return change_id
+
+    def update_change_status(self, change_id: str, status: str, comment: str = ""):
+        """更新变更状态"""
+        ws = self.wb[SheetType.CHANGE_MGMT.value.name]
+        cols = SheetType.CHANGE_MGMT.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            if row[cols.CHANGE_ID.value-1].value == change_id:
+                if status == "approved":
+                    row[cols.APPROVAL_STATUS.value-1].value = "已批准"
+                elif status == "rejected":
+                    row[cols.APPROVAL_STATUS.value-1].value = "已拒绝"
+                    row[cols.IMPLEMENT_STATUS.value-1].value = "已关闭"
+                    row[cols.CLOSE_TIME.value-1].value = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                row[cols.IMPACT_ANALYSIS.value-1].value = comment
+                self.wb.save(self.file_path)
+                return True
+        return False
+
+    def update_design_status(self, req_id: str, status: str, design_doc: str = None):
+        """更新需求设计状态"""
+        ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
+        cols = SheetType.REQUIREMENT_MGMT.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            if str(row[cols.REQ_ID.value-1].value) == req_id:
+                row[cols.DESIGN_STATUS.value-1].value = status
+                if design_doc:
+                    row[cols.DESIGN_DOC.value-1].value = design_doc
+                if status == "基线化":
+                    row[cols.DESIGN_REVIEW.value-1].value = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+                self.wb.save(self.file_path)
+                return True
+        return False
+
+    def update_task_artifacts(self, task_id: str, artifacts: list):
+        """更新任务关联产出物"""
+        ws = self.wb[SheetType.TASK_TRACKING.value.name]
+        cols = SheetType.TASK_TRACKING.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            if str(row[cols.TASK_ID.value-1].value) == task_id:
+                existing = row[cols.ARTIFACTS.value-1].value or ""
+                new_artifacts = existing.split(";") + artifacts
+                row[cols.ARTIFACTS.value-1].value = ";".join(filter(None, new_artifacts))
+                self.wb.save(self.file_path)
+                return True
+        return False
+
+    def mark_baseline(self, baseline_type: str, version: str, req_ids: list):
+        """标记需求基线"""
+        ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
+        cols = SheetType.REQUIREMENT_MGMT.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            req_id = str(row[cols.REQ_ID.value-1].value)
+            if req_id in req_ids:
+                if baseline_type == "design":
+                    row[cols.DESIGN_STATUS.value-1].value = "基线化"
+                    row[cols.DESIGN_REVIEW.value-1].value = datetime.now().isoformat()
+                elif baseline_type == "code":
+                    row[cols.CODE_BASELINE.value-1].value = version
+        self.wb.save(self.file_path)
+        
+    def get_baseline_requirements(self, baseline_type: str, version: str = None) -> list:
+        """获取基线需求"""
+        ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
+        cols = SheetType.REQUIREMENT_MGMT.value.columns
+        
+        baseline_reqs = []
+        for row in ws.iter_rows(min_row=2):
+            if baseline_type == "design" and row[cols.DESIGN_STATUS.value-1].value == "基线化":
+                if not version or row[cols.DESIGN_REVIEW.value-1].value.startswith(version):
+                    baseline_reqs.append(row[cols.REQ_ID.value-1].value)
+            elif baseline_type == "code" and row[cols.CODE_BASELINE.value-1].value == version:
+                baseline_reqs.append(row[cols.REQ_ID.value-1].value)
+        return baseline_reqs
 

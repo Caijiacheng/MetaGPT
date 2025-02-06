@@ -60,7 +60,7 @@ project_root/
 │   │   ├── ba_guide_spec.md      # 需求分析规范
 │   │   ├── ea_guide_spec.md      # 企业架构规范
 │   │   ├── dev_guide_spec.md      # 开发规范
-│   │   ├── prd_guide_spec.md      # 产品设计规范
+│   │   ├── pdm_guide_spec.md      # 产品设计规范
 │   │   └── qa_guide_spec.md      # 测试规范
 │   │   └── api_template_spec.yaml# 接口模板
 │   │
