@@ -249,28 +249,44 @@ class AICOProjectManager(Role):
         await self._wait_for_arch_analysis_complete()
 
     async def _confirm_requirement_baseline(self):
-        """对应文档6.1.3节基线确认流程"""
-        # 生成基线版本（严格在最后阶段）
-        new_version = self.version_svc.bump("minor")  # 需求变更默认minor版本
-        
-        # 执行需求评审
+        """需求基线确认（文档6.1.3节）"""
+        # 执行需求评审（AI预审）
         review_result = await self.rc.run(ReviewAllRequirements().run(
             context={
-                "version": new_version,
+                "version": self.current_baseline_version,
                 "requirements": self._get_all_parsed_requirements()
             }
         ))
         
-        # 更新跟踪表状态
+        # 等待人工确认（新增）
+        await self.publish("project:req_review_ready", {
+            "version": self.current_baseline_version,
+            "ai_review": review_result.instruct_content,
+            "requirements": self._get_all_parsed_requirements()
+        })
+        
+        # 监听人工确认结果（新增）
+        confirm_msg = await self.observe("project:req_review_confirmed", timeout=3600)
+        if not confirm_msg or not confirm_msg.content.get("approved"):
+            logger.error("需求基线确认未通过")
+            return
+        
+        # 更新跟踪表（记录审核信息）
         self.tracking_svc.mark_requirements_as_baselined(
-            version=new_version,
-            req_ids=[req["id"] for req in review_result.instruct_content["approved_reqs"]]
+            version=self.current_baseline_version,
+            req_ids=confirm_msg.content["approved_reqs"],
+            review_info={
+                "reviewer": confirm_msg.content.get("reviewer", "人工审核"),
+                "comment": confirm_msg.content.get("comment", ""),
+                "review_time": datetime.now().isoformat()
+            }
         )
         
-        # 发布基线确认事件
+        # 发布基线确认事件（携带审核信息）
         await self.publish("project:req_baseline_confirmed", {
-            "version": new_version,
-            "approved_reqs": review_result.instruct_content["approved_reqs"]
+            "version": self.current_baseline_version,
+            "approved_reqs": confirm_msg.content["approved_reqs"],
+            "review_details": confirm_msg.content
         })
 
     async def _process_design(self):

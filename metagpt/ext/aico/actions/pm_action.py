@@ -53,24 +53,21 @@ REVIEW_REQUIREMENTS_PROMPT = """作为资深项目经理，请根据以下材料
 class ReviewAllRequirements(Action):
     """复合需求检查（严格遵循文档6.1.3节要求）"""
     
-    async def run(self, parsed_data: dict) -> ActionOutput:
-        """执行三向一致性检查"""
-        # 新增AI引擎调用
-        prompt = REVIEW_REQUIREMENTS_PROMPT.format(
-            raw_requirement=parsed_data.get("raw_requirement"),
-            parsed_requirements=json.dumps(parsed_data.get("parsed_requirements"), indent=2),
-            user_stories=json.dumps(parsed_data.get("user_stories"), indent=2),
-            business_arch=json.dumps(parsed_data.get("business_arch"), indent=2),
-            tech_arch=json.dumps(parsed_data.get("tech_arch"), indent=2)
-        )
+    async def run(self, context: dict):
+        # AI预审结果
+        ai_result = await self._ai_review(context)
         
-        # 调用AI进行复核
-        review_result = await self.llm.aask(prompt)
-        check_result = json.loads(review_result)
-        
+        # 返回包含人工审核字段的结果
         return ActionOutput(
-            instruct_content=check_result,
-            content=parsed_data
+            content={
+                "ai_approved_reqs": ai_result["approved"],
+                "ai_rejected_reqs": ai_result["rejected"],
+                "human_confirmed": False  # 初始未确认
+            },
+            instruct_content={
+                "need_human_review": True,
+                "review_summary": "请人工复核以下需求..."
+            }
         )
 
     async def _check_biz_tech_alignment(self, data: dict) -> dict:
