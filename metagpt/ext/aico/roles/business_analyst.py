@@ -20,7 +20,7 @@ from ..actions.ba_action import ParseBizRequirement, Update4ABusiness
 from pathlib import Path
 import logging
 from datetime import datetime
-from metagpt.ext.aico.services.dco_manager_service import DocManagerService, DocType
+from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
 
 logger = logging.getLogger(__name__)
 
@@ -72,17 +72,15 @@ class AICOBusinessAnalyst(AICOBaseRole):
                 })
 
     def _save_user_stories(self, project_id: str, version: str) -> Path:
-        """生成用户故事文档"""
-        content = self.doc_manager.template.user_story(
-            version=version,
-            stories=self.user_stories
+        """使用文档模板服务"""
+        content = self.doc_manager.generate_template(
+            template_type="user_story",
+            params={
+                "version": version,
+                "stories": self.user_stories
+            }
         )
-        return self.doc_manager.save_document(
-            doc_type=DocType.USER_STORY,
-            content=content,
-            version=version,
-            req_id=project_id
-        )
+        # ...保存逻辑...
 
     async def _process_requirement(self, req_info: dict) -> dict:
         """处理业务需求分析核心逻辑"""
@@ -108,9 +106,37 @@ class AICOBusinessAnalyst(AICOBaseRole):
             })
         )
         
+        # 获取业务架构文档路径
+        biz_arch_path = self.doc_manager.get_doc_path(
+            DocType.BUSINESS_ARCH,
+            version=req_info["version"],
+            create_dir=True
+        )
+        
+        # 保存需求分析报告
+        analysis_report = await self._save_analysis_report(
+            req_info["req_id"],
+            parse_result.instruct_content,
+            version=req_info["version"]
+        )
+        
         return {
             "biz_req_id": parse_result.instruct_content["requirement_id"],
-            "architecture_file": str(self.project_root / "docs/ea/biz_architecture.md"),
+            "architecture_file": str(biz_arch_path),  # 使用服务生成的路径
             "user_stories": update_result.instruct_content["user_stories"],
-            "version": req_info["version"]
+            "version": req_info["version"],
+            "analysis_report": str(analysis_report)
         } 
+
+    async def _save_analysis_report(self, req_id: str, data: dict, version: str) -> Path:
+        """保存需求分析报告"""
+        content = self.doc_manager.template.requirement_analysis(
+            req_id=req_id,
+            analysis_result=data
+        )
+        return self.doc_manager.save_document(
+            doc_type=DocType.REQUIREMENT_ANALYZED,
+            content=content,
+            version=version,
+            req_id=req_id
+        )

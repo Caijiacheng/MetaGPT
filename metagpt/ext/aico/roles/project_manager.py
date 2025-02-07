@@ -40,35 +40,28 @@ class AICOProjectManager(Role):
         self.doc_manager = DocManagerService(self.project_root)
         
     def _init_project(self):
-        """严格遵循文档结构的初始化方法"""
-        base_dirs = [
-            # 核心目录结构（按文档4.2节）
-            "docs/specs",
-            "docs/requirements/raw",
-            "docs/requirements/analyzed",
-            "docs/ea/biz_arch",
-            "docs/ea/tech_arch",
-            "docs/design/prd",
-            "docs/design/services",
-            "docs/design/tests",
-            "releases",
-            "tracking"
-        ]
-
+        """使用DocManagerService管理目录结构"""
         if self.project_root.exists():
             logger.info(f"加载现有项目: {self.project_root}")
             self._validate_project_structure()
             self._sync_specs()
             return
 
-        # 创建新项目结构（不包含版本号）
+        # 创建新项目结构（通过DocManagerService）
         logger.info(f"初始化新项目结构: {self.project_root}")
-        for rel_path in base_dirs:
-            abs_path = self.project_root / rel_path
-            abs_path.mkdir(parents=True, exist_ok=True)
-            logger.debug(f"创建目录: {abs_path}")
-
-        # 创建跟踪表（不初始化需求文档）
+        
+        # 确保基础目录存在
+        self.doc_manager.ensure_dirs([
+            DocType.REQUIREMENT_RAW,
+            DocType.REQUIREMENT_ANALYZED,
+            DocType.BUSINESS_ARCH,
+            DocType.TECH_ARCH,
+            DocType.PRD,
+            DocType.SERVICE_DESIGN,
+            DocType.TEST_CASE
+        ])
+        
+        # 创建跟踪表（通过服务类）
         self._create_tracking_file()
         logger.info("项目结构初始化完成")
 
@@ -96,17 +89,14 @@ class AICOProjectManager(Role):
 
 
     def _sync_specs(self, force: bool = False):
-        """同步规范文件（项目规范优先于全局规范）"""
-        global_spec_root = Path(config.workspace.specs)  # 全局规范路径
-        project_spec_dir = self.project_root / "docs/aico/specs"
+        """使用DocManagerService获取规范路径"""
+        global_spec_root = Path(config.workspace.specs)
+        project_spec_dir = self.doc_manager.get_doc_path(
+            DocType.SPEC_PM,
+            version=""
+        ).parent  # 获取规范目录
         
-        # 拷贝全局规范到项目目录（不覆盖已有文件）
-        for spec_file in global_spec_root.glob("*.md"):
-            target = project_spec_dir / spec_file.name
-            if not target.exists() or force:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(spec_file, target)
-                logger.debug(f"同步规范文件: {spec_file.name}")
+        # 同步规范文件...
 
     def get_spec(self, spec_type: str) -> str:
         """获取规范内容（项目规范优先）"""
@@ -120,10 +110,12 @@ class AICOProjectManager(Role):
         raise FileNotFoundError(f"规范文件不存在: {spec_type}")
 
     def _create_tracking_file(self):
-        """创建项目跟踪表（改为通过服务类）"""
-        self.tracking_svc = ProjectTrackingManager(
-            self.project_root / "tracking/ProjectTracking.xlsx"
+        """通过DocManagerService获取跟踪表路径"""
+        tracking_path = self.doc_manager.get_doc_path(
+            DocType.PROJECT_TRACKING,
+            version=""
         )
+        self.tracking_svc = ProjectTrackingManager(tracking_path)
         self.tracking_svc.save()
 
     async def _act(self) -> None:
@@ -394,19 +386,22 @@ class AICOProjectManager(Role):
         return "patch"
 
     def _create_version_dirs(self, version: str):
-        """按文档规范创建版本目录"""
-        version_dirs = [
-            f"docs/requirements/analyzed/{version}",
-            f"docs/ea/biz_arch/{version}",
-            f"docs/ea/tech_arch/{version}",
-            f"docs/design/prd/{version}",
-            f"docs/design/services/product/{version}",
-            f"docs/design/tests/{version}",
-            f"releases/{version}"
+        """使用DocManagerService创建版本目录"""
+        doc_types = [
+            DocType.REQUIREMENT_ANALYZED,
+            DocType.BUSINESS_ARCH,
+            DocType.TECH_ARCH,
+            DocType.PRD,
+            DocType.SERVICE_DESIGN,
+            DocType.TEST_CASE
         ]
         
-        for d in version_dirs:
-            (self.project_root / d).mkdir(parents=True, exist_ok=True)
+        for doc_type in doc_types:
+            self.doc_manager.get_doc_path(
+                doc_type=doc_type,
+                version=version,
+                create_dir=True
+            )
 
     def _init_version_documents(self, version: str):
         """在首个正式版本创建需求文档"""

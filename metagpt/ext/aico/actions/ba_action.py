@@ -15,9 +15,9 @@ from datetime import datetime
 from openpyxl import load_workbook, Workbook
 from metagpt.actions import Action
 import json
-from ..actions.base_action import AICOBaseAction
+
 from pathlib import Path
-from metagpt.ext.aico.services import SpecService
+from metagpt.ext.aico.services import DocManagerService, DocType
 from metagpt.actions import ActionOutput
 import logging
 
@@ -57,29 +57,37 @@ UPDATE_4A_BUSINESS_PROMPT = """
 
 logger = logging.getLogger(__name__)
 
-class ParseBizRequirement(AICOBaseAction):
+class ParseBizRequirement(Action):
     """遵循规范的业务需求解析"""
     
     async def _run_impl(self, input_data: Dict) -> Dict:
-        # 获取项目规范服务
-        spec_service = SpecService(Path(input_data["project_root"]))
+        # 使用文档服务获取规范
+        doc_manager = DocManagerService(Path(input_data["project_root"]))
         
         # 生成带规范优先级的提示词
+        project_spec = doc_manager.get_spec(DocType.SPEC_EA)
+        global_spec = doc_manager.get_spec(DocType.SPEC_EA, use_project=False)
+        
         prompt = PARSE_BIZ_REQUIREMENT_PROMPT.format(
-            global_spec=spec_service.get_global_spec("ea_design"),
-            project_spec=spec_service.get_project_spec("ea_design"),
+            global_spec=global_spec,
+            project_spec=project_spec,
             raw_requirement=input_data["raw_requirement"]
         )
         
         # 调用LLM并解析结果
         result = await self.parse_llm_response(prompt)
         
-        # 生成标准化需求ID
-        req_id = f"RQ-B-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        # 使用文档服务生成标准ID
+        doc_manager = DocManagerService(Path(input_data["project_root"]))
+        req_id = doc_manager.generate_doc_id(
+            DocType.REQUIREMENT_ANALYZED,
+            prefix="RQ-B"
+        )
         
         return ActionOutput(
             content=input_data,
             instruct_content={
+                "requirement_id": req_id,
                 "standard_requirements": [
                     {
                         "std_req_id": f"SR-{datetime.now().strftime('%Y%m%d%H%M%S')}",
@@ -105,7 +113,7 @@ class ParseBizRequirement(AICOBaseAction):
             logger.error(f"LLM响应解析失败: {str(e)}")
             raise ValueError("业务需求解析结果格式错误")
 
-class Update4ABusiness(AICOBaseAction):
+class Update4ABusiness(Action):
     """基于规范更新4A业务架构"""
     
     async def _run_impl(self, input_data: Dict) -> Dict:
@@ -142,7 +150,7 @@ class Update4ABusiness(AICOBaseAction):
                             "status": "待评审",
                             "acceptance_criteria": story["acceptance_criteria"]
                         }
-                        for idx, story in enumerate(stories, 1)
+                        for idx, story in enumerate(result["user_stories"].get(std_req["std_req_id"], []), 1)
                     ]
                     for std_req in input_data["standard_requirements"]
                 },

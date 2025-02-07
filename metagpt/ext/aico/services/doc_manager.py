@@ -119,7 +119,7 @@ class AICODocManager:
         self.docs_path = project_root / "docs"
         self.docs_path.mkdir(parents=True, exist_ok=True)
         
-    def get_doc_path(self, doc_type: str, version: str, **kwargs) -> Path:
+    def get_doc_path(self, doc_type: DocType, version: str = "", create_dir: bool = False, **kwargs) -> Path:
         """获取文档路径(按照AICO规范)"""
         base_paths = {
             # PM文档路径
@@ -152,7 +152,8 @@ class AICODocManager:
             path_template = path_template.format(**kwargs)
             
         doc_path = self.project_root / path_template
-        doc_path.parent.mkdir(parents=True, exist_ok=True)
+        if create_dir:
+            doc_path.parent.mkdir(parents=True, exist_ok=True)
         return doc_path
 
     async def save_document(
@@ -274,3 +275,28 @@ class AICODocManager:
         
         summary = await self.llm.aask(prompt)
         return summary 
+
+    def ensure_dirs(self, doc_types: List[DocType]):
+        """确保指定文档类型的基础目录存在"""
+        for doc_type in doc_types:
+            path = self.get_doc_path(
+                doc_type=doc_type,
+                version="latest",  # 基础目录不需要版本
+                create_dir=True
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+
+    def get_spec(self, spec_type: DocType, use_project: bool = True) -> str:
+        """获取规范内容（项目规范优先）"""
+        project_spec = self.get_doc_path(
+            spec_type,
+            version="",
+            create_dir=False
+        )
+        global_spec = Path(config.workspace.specs) / f"{spec_type.value}_spec.md"
+        
+        if use_project and project_spec.exists():
+            return project_spec.read_text(encoding="utf-8")
+        elif global_spec.exists():
+            return global_spec.read_text(encoding="utf-8")
+        raise FileNotFoundError(f"规范文件不存在: {spec_type}")
