@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 from metagpt.ext.aico.config.tracking_config import SheetType
-from metagpt.ext.aico.services.version_service import VersionService, get_current_version
+from metagpt.ext.aico.services.version_manager import AICOVersionManager, get_current_version
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +25,7 @@ class TrackingServiceConfig:
     file_path: Path
     env: str = "prod"
 
-class ProjectTrackingService:
+class ProjectTrackingManager:
     """项目跟踪服务（Excel实现）"""
     
     def __init__(self, file_path: Path):

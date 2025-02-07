@@ -15,11 +15,11 @@ from ..actions.pm_action import (
 import logging
 from metagpt.ext.aico.config import config
 import shutil
-from ..services.project_tracking_service import ProjectTrackingService
-from ..services.version_service import VersionService
-from ..services.version_service import get_current_version
+from ..services.project_tracking_manager import ProjectTrackingManager
+from ..services.version_manager import AICOVersionManager
+from ..services.version_manager import get_current_version
 from metagpt.environment.aico.aico_env import AICOEnvironment
-from metagpt.ext.aico.services.dco_manager_service import DocManagerService, DocType
+from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class AICOProjectManager(Role):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_actions([ReviewRequirement, ReviewDesign, ReviewAllRequirements])  # 只保留需要LLM交互的Action
-        self.version_svc = VersionService(self.project_root)  # 注入项目根目录
+        self.version_svc = AICOVersionManager(self.project_root)  # 注入项目根目录
         self.baseline_versions = [self.version_svc.current]
         self.current_baseline_version = self.version_svc.current
         self.doc_manager = DocManagerService(self.project_root)
@@ -121,7 +121,7 @@ class AICOProjectManager(Role):
 
     def _create_tracking_file(self):
         """创建项目跟踪表（改为通过服务类）"""
-        self.tracking_svc = ProjectTrackingService(
+        self.tracking_svc = ProjectTrackingManager(
             self.project_root / "tracking/ProjectTracking.xlsx"
         )
         self.tracking_svc.save()
@@ -342,7 +342,7 @@ class AICOProjectManager(Role):
     def _clean_old_versions(self):
         """清理逻辑改为基于VERSION文件"""
         current_version = get_current_version(self.project_root)
-        vs = VersionService.from_version(current_version)
+        vs = AICOVersionManager.from_version(current_version)
         
         # 根据当前版本计算保留范围
         retention_policy = {

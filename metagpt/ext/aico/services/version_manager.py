@@ -3,7 +3,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class VersionService:
+class AICOVersionManager:
     """语义化版本管理服务（增强初始化逻辑）"""
     
     def __init__(self, project_root: Path):
@@ -77,7 +77,7 @@ def get_current_version(project_root: Path) -> str:
     
     # 格式校验
     try:
-        VersionService.from_version(version)
+        AICOVersionManager.from_version(version)
         return version
     except ValueError:
         logger.error(f"VERSION文件格式错误: {version}")
