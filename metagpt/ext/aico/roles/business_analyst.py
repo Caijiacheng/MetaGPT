@@ -72,15 +72,21 @@ class AICOBusinessAnalyst(AICOBaseRole):
                 })
 
     def _save_user_stories(self, project_id: str, version: str) -> Path:
-        """使用文档模板服务"""
-        content = self.doc_manager.generate_template(
-            template_type="user_story",
-            params={
-                "version": version,
-                "stories": self.user_stories
-            }
+        """生成并保存用户故事文档"""
+        # 使用文档模板生成内容
+        content = self.doc_manager.template.user_story(
+            version=version,
+            stories=self.user_stories
         )
-        # ...保存逻辑...
+        
+        # 保存文档
+        return self.doc_manager.save_document(
+            doc_type=DocType.USER_STORY,
+            content=content,
+            version=version,
+            req_id=project_id,
+            service_name="product"  # 根据规范参数命名
+        )
 
     async def _process_requirement(self, req_info: dict) -> dict:
         """处理业务需求分析核心逻辑"""

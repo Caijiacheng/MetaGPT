@@ -80,8 +80,9 @@ class ParseBizRequirement(Action):
         # 使用文档服务生成标准ID
         doc_manager = DocManagerService(Path(input_data["project_root"]))
         req_id = doc_manager.generate_doc_id(
-            DocType.REQUIREMENT_ANALYZED,
-            prefix="RQ-B"
+            doc_type=DocType.REQUIREMENT_ANALYZED,
+            prefix="REQ",
+            pattern="YYYYMMDD-XXXX"  # 例: REQ-20231215-0001
         )
         
         return ActionOutput(
@@ -138,6 +139,18 @@ class Update4ABusiness(Action):
         old_arch = input_data.get("current_architecture", "")
         new_arch = result["updated_architecture"]
         changes = self._diff_architecture(old_arch, new_arch)
+        
+        # 在保存架构时记录变更
+        doc_manager = DocManagerService(Path(input_data["project_root"]))
+        doc_manager.save_document(
+            doc_type=DocType.BUSINESS_ARCH,
+            content=new_arch,
+            version=input_data["version"],
+            metadata={
+                "change_log": changes,
+                "related_reqs": [r["std_req_id"] for r in input_data["standard_requirements"]]
+            }
+        )
         
         return ActionOutput(
             content=input_data,
