@@ -20,45 +20,114 @@ from ..actions.ea_action import ParseTechRequirements, Update4ATech
 from openpyxl import load_workbook
 from datetime import datetime
 from pathlib import Path
+from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
+import logging
+
+logger = logging.getLogger(__name__)
 
 class AICOEnterpriseArchitect(AICOBaseRole):
-    """企业架构师角色"""
+    """遵循AICO规范的企业架构师角色"""
     
-    name: str = "Bob"
+    name: str = "AICO_EA"
     profile: str = "Enterprise Architect"
-    goal: str = "分析技术需求并设计系统架构"
-    constraints: str = "遵循AICO技术架构规范"
+    goal: str = "设计技术架构并维护架构资产"
+    constraints: str = "严格遵循AICO技术架构规范"
     
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.doc_manager = DocManagerService(self.project_root)
+        
+    async def _act(self) -> None:
+        """纯消息驱动模式"""
+        async for msg in self.observe(AICOEnvironment.MSG_REQUIREMENT_TECH_ANALYSIS.name):
+            try:
+                # 通知PM分析开始
+                await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_STARTED.name, {
+                    "req_id": msg.content["req_id"],
+                    "start_time": datetime.now().isoformat()
+                })
+                
+                result = await self._process_tech_requirement(msg.content)
+                
+                # 返回处理结果给PM
+                await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_DONE.name, {
+                    "req_id": msg.content["req_id"],
+                    "architecture": result["architecture"],
+                    "output_files": [
+                        str(result["architecture_file"]),
+                        result["requirement_matrix_file"]
+                    ],
+                    "change_log": result["change_log"]
+                })
+                
+            except Exception as e:
+                logger.error(f"技术需求分析失败: {msg.content['req_id']}")
+                await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_FAILED.name, {
+                    "req_id": msg.content["req_id"],
+                    "error": str(e),
+                    "fail_time": datetime.now().isoformat()
+                })
+
+    async def _process_tech_requirement(self, req_info: dict) -> dict:
+        """处理技术需求分析核心逻辑"""
+        # 执行需求解析
+        parse_result = await self.rc.run(
+            ParseTechRequirements().run({
+                "raw_requirement": req_info["requirements"],
+                "project_root": str(self.project_root),
+                "req_id": req_info["req_id"],
+                "version": req_info["version"]
+            })
+        )
+        
+        # 更新技术架构
+        update_result = await self.rc.run(
+            Update4ATech().run({
+                "requirement_matrix": parse_result.instruct_content,
+                "current_architecture": self._get_current_architecture(req_info["version"]),
+                "project_root": str(self.project_root),
+                "req_id": req_info["req_id"],
+                "version": req_info["version"]
+            })
+        )
+        
+        return {
+            "architecture": update_result.instruct_content["architecture"],
+            "architecture_file": self._save_tech_architecture(
+                req_info["version"],
+                update_result.instruct_content
+            ),
+            "requirement_matrix_file": parse_result.content["output_file"],
+            "change_log": update_result.instruct_content["change_log"]
+        }
+
+    def _get_current_architecture(self, version: str) -> str:
+        """获取当前版本架构"""
+        arch_path = self.doc_manager.get_doc_path(
+            DocType.TECH_ARCH,
+            version=version,
+            create_dir=False
+        )
+        return arch_path.read_text(encoding="utf-8") if arch_path.exists() else ""
+
+    def _save_tech_architecture(self, version: str, data: dict) -> Path:
+        """保存技术架构文档"""
+        return self.doc_manager.save_document(
+            doc_type=DocType.TECH_ARCH,
+            content=data["architecture"],
+            version=version,
+            metadata={
+                "components": data["components"],
+                "dependencies": data["dependencies"],
+                "change_log": data["change_log"]
+            }
+        )
+
     def get_actions(self) -> list:
         return [
             ("parse_tech_requirements", ParseTechRequirements),
             ("update_4a_tech", Update4ATech)
         ]
-        
-    async def _act(self):
-        # 接收分析任务（依赖BA输出）
-        msg = await self.observe(AICOEnvironment.MSG_REQUIREMENT_TECH_ANALYSIS)
-        req_file = Path(msg.content["file_path"])
-        
-        # 执行分析...
-        tech_arch = await self._analyze_tech(msg.content["business_arch"])
-        
-        
-        # 发布技术架构
-        await self.publish(AICOEnvironment.MSG_TECH_ARCH, {
-            "req_id": msg.content["req_id"],
-            "architecture": tech_arch
-        })
-        
-        # 发布分析完成通知
-        await self.publish(AICOEnvironment.MSG_EA_ANALYSIS_DONE, {
-            "req_id": req_file.stem,
-            "output_files": [
-                str(req_file),
-                str(tech_arch)
-            ],
-            "status": "completed"
-        })
 
     def _update_req_status(self, tracking_file: Path, status: str, req_id: str):
         """更新需求跟踪表状态"""

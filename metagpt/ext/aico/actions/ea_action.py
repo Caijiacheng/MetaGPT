@@ -10,143 +10,185 @@
   1. parseTechRequirements: 调用AI引擎分析技术需求,生成需求矩阵
   2. update4ATech: 调用AI引擎更新4A架构(应用架构、数据架构、技术架构)
 """
-from typing import Dict
+from typing import Dict, List
 from datetime import datetime
 from openpyxl import load_workbook
-from metagpt.actions import Action
+from metagpt.actions import Action, ActionOutput
 import json
 from pathlib import Path
+from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
+import asyncio
 
 PARSE_TECH_REQUIREMENT_PROMPT = """
-你是一位企业架构师,请调用AI引擎对以下架构文档进行分析,提取技术需求并输出需求矩阵,要求包含:
-{
-    "requirement_id": "TREQ-XXX",
-    "type": "技术需求",
-    "title": "需求标题",
-    "description": "需求描述",
-    "priority": "高/中/低",
-    "status": "新建/分析中/已完成",
-    "stakeholders": ["相关干系人"],
-    "technical_value": "技术价值说明",
-    "constraints": "约束条件",
-    "dependencies": ["依赖的其他需求ID"],
-    "created_time": "YYYY-MM-DD HH:mm:ss"
-}
+根据技术规范分析需求：
 
-架构文档:
+【项目规范】
+{project_spec}
+
+【全局规范】
+{global_spec}
+
+【技术需求内容】
 {requirements}
+
+输出要求：
+1. 技术需求矩阵（ID/描述/优先级）
+2. 架构影响分析
+3. 技术约束说明
 """
 
-UPDATE_4A_TECH_PROMPT = '''
-请严格遵循《技术架构设计规范》中的以下要求：
+UPDATE_4A_TECH_PROMPT = """
+基于当前架构版本：
+{current_architecture}
 
-【版本管理】
-{version_rule}
+和需求矩阵：
+{requirement_matrix}
 
-【数据架构要求】
-{data_arch_rule}
-
-【技术选型规则】
-{tech_selection_rule}
-
-根据需求生成架构设计：
-'''
+请：
+1. 更新应用/数据/技术架构
+2. 生成架构变更说明
+3. 标识技术选型变化
+"""
 
 ARCH_REFERENCE_PATH = Path("docs/aico/specs/EA-Design.md")
 
 class ParseTechRequirements(Action):
-    """调用AI引擎分析技术需求,生成需求矩阵"""
-    async def run(self, requirements_info: Dict) -> Dict:
-        # 调用AI引擎分析需求
-        prompt = PARSE_TECH_REQUIREMENT_PROMPT.format(
-            requirements=requirements_info.get("requirements", "")
-        )
-        requirement_matrix = await self.llm.aask(prompt)
+    """遵循规范的技术需求解析"""
+    
+    async def _run_impl(self, input_data: Dict) -> Dict:
+        doc_manager = DocManagerService(Path(input_data["project_root"]))
         
-        # 写入需求跟踪表
-        tracking_file = requirements_info.get("tracking_file")
-        if tracking_file:
-            wb = load_workbook(tracking_file)
-            ws = wb["需求管理"]
-            
-            # 解析需求矩阵并写入Excel
-            matrix_data = json.loads(requirement_matrix)
-            row = [
-                matrix_data["requirement_id"],
-                matrix_data["title"],
-                matrix_data["description"],
-                "技术需求",  # 需求来源
-                matrix_data["priority"],
-                matrix_data["status"],
-                matrix_data["stakeholders"][0],  # 提出人取第一个干系人
-                matrix_data["created_time"],
-                "",  # 目标完成时间待定
-                matrix_data.get("acceptance_criteria", ""),
-                matrix_data.get("constraints", "")  # 约束作为备注
-            ]
-            ws.append(row)
-            wb.save(tracking_file)
-            
-        return {
-            "requirement_matrix": requirement_matrix,
-            "tracking_file": tracking_file
+        # 获取规范内容
+        project_spec = doc_manager.get_spec(DocType.SPEC_EA)
+        global_spec = doc_manager.get_spec(DocType.SPEC_EA, use_project=False)
+        
+        prompt = PARSE_TECH_REQUIREMENT_PROMPT.format(
+            project_spec=project_spec,
+            global_spec=global_spec,
+            requirements=input_data["raw_requirement"]
+        )
+        
+        # 调用LLM并解析
+        result = await self._parse_llm_response(prompt)
+        
+        # 生成需求矩阵文档
+        matrix_file = doc_manager.save_document(
+            doc_type=DocType.TECH_REQUIREMENT,
+            content=json.dumps(result, indent=2),
+            version=input_data["version"],
+            req_id=input_data["req_id"]
+        )
+        
+        return ActionOutput(
+            content=input_data,
+            instruct_content=result,
+            output_file=str(matrix_file)
+        )
+
+    async def _parse_llm_response(self, prompt: str) -> Dict:
+        """标准化解析LLM响应"""
+        max_retries = 3
+        backoff_factor = 1.5
+        
+        for attempt in range(max_retries):
+            try:
+                raw_result = await self.llm.aask(prompt)
+                
+                # 提取可能的JSON块
+                json_str = raw_result.split("```json")[1].split("```")[0].strip()
+                result = json.loads(json_str)
+                
+                # 校验基础结构
+                required_fields = {
+                    "ParseTechRequirements": ["requirements", "impact_analysis", "constraints"],
+                    "Update4ATech": ["architecture", "components", "dependencies", "change_log"]
+                }
+                
+                action_type = self.__class__.__name__
+                for field in required_fields.get(action_type, []):
+                    if field not in result:
+                        raise ValueError(f"缺少必要字段: {field}")
+                
+                # 架构专项校验
+                if action_type == "Update4ATech":
+                    if not isinstance(result["architecture"], dict):
+                        raise ValueError("架构信息必须是字典")
+                    if "application_architecture" not in result["architecture"]:
+                        raise ValueError("缺少应用架构定义")
+                        
+                return result
+                
+            except (IndexError, json.JSONDecodeError) as e:
+                self.logger.warning(f"JSON解析失败，第{attempt+1}次重试... 错误: {str(e)}")
+                prompt += "\n请严格按照JSON格式输出，确保语法正确"
+                if attempt == max_retries - 1:
+                    self.logger.error("达到最大重试次数，使用降级方案")
+                    return self._generate_fallback_output(action_type)
+                await asyncio.sleep(backoff_factor ** attempt)
+                
+            except ValueError as e:
+                self.logger.error(f"字段校验失败: {str(e)}")
+                prompt += f"\n请确保包含以下字段: {required_fields.get(action_type, '')}"
+                if attempt == max_retries - 1:
+                    return self._generate_fallback_output(action_type)
+                await asyncio.sleep(backoff_factor ** attempt)
+
+    def _generate_fallback_output(self, action_type: str) -> Dict:
+        """生成降级输出"""
+        fallback_templates = {
+            "ParseTechRequirements": {
+                "requirements": [],
+                "impact_analysis": "架构影响分析失败",
+                "constraints": "无法获取技术约束"
+            },
+            "Update4ATech": {
+                "architecture": {
+                    "application_architecture": {"services": []},
+                    "data_architecture": {"models": []},
+                    "technical_architecture": {"components": []}
+                },
+                "components": [],
+                "dependencies": [],
+                "change_log": ["生成架构失败，使用默认配置"]
+            }
         }
+        self.logger.warning(f"使用降级方案 for {action_type}")
+        return fallback_templates.get(action_type, {})
 
 class Update4ATech(Action):
-    """调用AI引擎更新4A架构"""
-    async def run(self, requirement_info: Dict) -> Dict:
-        # 加载技术架构参考
-        with open(ARCH_REFERENCE_PATH, "r", encoding="utf-8") as f:
-            tech_ref = "\n".join([
-                line for line in f.readlines() 
-                if "## 5. 技术架构（TA）" in line or line.startswith("### 5.")
-            ])
-            
-        prompt = UPDATE_4A_TECH_PROMPT.format(
-            tech_arch_ref=tech_ref,
-            requirement_matrix=json.dumps(requirement_info, indent=2)
-        )
-        architecture_result = await self.llm.aask(prompt)
-        
-        # 写入架构设计文档
-        tracking_file = requirement_info.get("tracking_file")
-        if tracking_file:
-            wb = load_workbook(tracking_file)
-            ws = wb["架构设计"]
-            # 写入架构设计
-            # ws.append([...])  # 具体实现略
-            wb.save(tracking_file)
-            
-        return {
-            "4a_architecture": architecture_result.get("4a_architecture"),
-            "tracking_file": tracking_file
-        }
-
+    """基于规范更新4A技术架构"""
+    
     async def _run_impl(self, input_data: Dict) -> Dict:
-        # 加载业务架构和技术需求
-        biz_arch = input_data["business_arch"]
-        tech_req = input_data["requirement_matrix"]
+        # 生成架构更新提示词
+        prompt = UPDATE_4A_TECH_PROMPT.format(
+            current_architecture=input_data["current_architecture"],
+            requirement_matrix=json.dumps(input_data["requirement_matrix"], indent=2)
+        )
         
-        # 生成架构提示词
-        prompt = f"""
-        根据以下业务架构和技术需求，更新4A技术架构：
+        # 调用LLM生成架构
+        result = await self._parse_llm_response(prompt)
         
-        【业务架构】
-        {json.dumps(biz_arch, indent=2)}
+        # 生成架构变更说明
+        change_log = self._generate_change_log(
+            input_data["current_architecture"],
+            result["architecture"]
+        )
         
-        【技术需求】
-        {json.dumps(tech_req, indent=2)}
-        
-        输出要求：
-        1. 应用架构需支持业务架构中的{', '.join(biz_arch.get('processes', []))}流程
-        2. 数据架构需包含{biz_arch.get('data_entities', [])}实体
-        3. 技术架构需满足{tech_req.get('non_functional', '')}非功能需求
-        """
-        
-        # 调用AI生成架构
-        result = await self.llm.aask(prompt)
-        return self._parse_arch(result)
-        
+        return ActionOutput(
+            content=input_data,
+            instruct_content={
+                "architecture": result["architecture"],
+                "components": result.get("components", []),
+                "dependencies": result.get("dependencies", []),
+                "change_log": change_log
+            }
+        )
+    
+    def _generate_change_log(self, old_arch: str, new_arch: str) -> List[str]:
+        """生成架构变更日志"""
+        # 实现差异对比逻辑...
+        return ["架构初始化"] if not old_arch else ["版本更新"]
+
     def _parse_arch(self, raw: str) -> Dict:
         try:
             data = json.loads(raw)
@@ -166,34 +208,3 @@ class Update4ATech(Action):
             "data_architecture": {"models": [], "data_flow": ""},
             "security_architecture": {"access_control": ""}
         }
-
-        # 写入任务跟踪表
-        tracking_file = Path(input_data["tracking_file"])
-        wb = load_workbook(tracking_file)
-        if "任务跟踪" not in wb.sheetnames:
-            task_sheet = wb.create_sheet("任务跟踪")
-            task_sheet.append([
-                "任务ID", "关联需求ID", "关联用户故事ID", "任务名称",
-                "任务描述", "任务类型", "负责人", "任务状态",
-                "计划开始时间", "计划结束时间", "实际开始时间", "实际结束时间", "备注"
-            ])
-        else:
-            task_sheet = wb["任务跟踪"]
-            
-        # 生成架构相关任务
-        task_sheet.append([
-            f"T-{len(task_sheet.rows):03d}",
-            input_data["requirement_id"],
-            "ARCH-DESIGN",  # 特殊标记架构设计任务
-            "4A架构设计评审",
-            "完成技术架构设计评审",
-            "架构设计",
-            "EA系统",
-            "已完成",
-            datetime.now().strftime("%Y-%m-%d"),
-            datetime.now().strftime("%Y-%m-%d"),
-            datetime.now().strftime("%Y-%m-%d"),
-            datetime.now().strftime("%Y-%m-%d"),
-            "关联架构文档：" + ARCH_REFERENCE_PATH.name
-        ])
-        wb.save(tracking_file) 
