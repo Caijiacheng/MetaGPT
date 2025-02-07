@@ -17,71 +17,116 @@ from metagpt.schemas.message import MessageSchema, MessageType
 class AICOEnvironment(Environment):
     """AICO项目环境"""
     
-    # 消息类型定义（按照新版文档规范）
-    MSG_PROJECT_INFO         = "project_info"         # 项目基本信息
-    MSG_RAW_REQUIREMENTS     = "raw_requirements"     # 用户输入的原始需求文本
-    MSG_USER_STORIES         = "user_stories"         # 经转换后的用户故事列表
-    MSG_PARSED_REQUIREMENTS  = "parsed_requirements"  # 解析后的需求（JSON格式，包含：req_id, req_name, req_description, source, priority, status, submitter, submission_time, target_completion_time, acceptance_criteria, remarks）
-    MSG_TASKS                = "tasks"                # 任务列表（JSON格式，包含：task_id, related_req_id, related_story_id, task_name, description, type, assignee, status, planned_start, planned_end, actual_start, actual_end, remarks）
-    MSG_CODE                 = "code"                 # 代码产出（JSON格式，包含：code_content, unit_tests, deployment_instructions）
-    MSG_CODE_REVIEW          = "code_review"          # 代码评审结果（JSON格式，包含：issues, suggestions）
-    MSG_UNIT_TEST_RESULT     = "unit_test_result"     # 单元测试结果（JSON格式描述）
-    MSG_TECH_DESIGN          = "tech_design"          # 技术方案设计文档（JSON格式）
-    MSG_4A_ASSESSMENT        = "4a_assessment"        # 4A评估结果（JSON格式，包含：introduction, business_architecture, application_architecture, data_architecture, technical_architecture）
-    MSG_ARCH_DESIGN          = "arch_design"          # 架构设计文档（JSON格式，包含详细设计方案、图表使用mermaid语法）
-    MSG_PRODUCT_DOCS         = "product_docs"         # 产品文档（JSON格式）
-    MSG_REQUIREMENT_ANALYSIS = "requirement_analysis" # 需求分析报告（JSON格式）
-    MSG_PRD                  = "prd"                  # PRD文档（JSON格式，包含：product_overview, functional_requirements, non_functional_requirements, acceptance_criteria）
-    MSG_PRD_REVISED          = "prd_revised"          # 修订后的PRD
-    MSG_PRODUCT_DESIGN       = "product_design"       # 产品设计方案中间产物（JSON格式）
-    MSG_PRODUCT_DESIGNED     = "product_designed"     # 产品设计的最终产出（JSON格式）
-    MSG_DEV_ENV              = "dev_env"              # 开发环境配置（JSON格式描述）
-    MSG_BUG_REPORT           = "bug_report"           # 缺陷报告（JSON格式，包含：bug_id, description, reproduction_steps, analysis, fix_suggestions）
-    MSG_TEST_CASES           = "test_cases"           # 测试用例（JSON格式，包含：test_case_id, description, steps, expected_results, test_data）
-    MSG_TEST_RESULTS         = "test_results"         # 测试结果（JSON格式描述详细执行记录）
-    MSG_DEBUG_RESULT         = "debug_result"         # 代码调试结果（JSON格式）
-    MSG_BUSINESS_ARCH        = "business_arch"        # 业务架构产出
-    MSG_TECH_ARCH            = "tech_arch"            # 技术架构产出
+    # 基础消息类型
+    MSG_PROJECT_INFO = "project_info"
+    MSG_RAW_REQUIREMENTS = "raw_requirements"
+    MSG_USER_STORIES = "user_stories"
+    
+    # 需求分析相关消息
     MSG_REQUIREMENT_BIZ_ANALYSIS = MessageSchema(
         name="requirement:biz_analysis",
-        desc="业务分析任务",
+        desc="业务需求分析任务",
         content={
-            "req_id": str,          # 原始需求ID（文件stem）
-            "file_path": str,       # 原始需求文件路径
-            "type": str             # 需求类型 business/tech
+            "req_id": str,          # 需求ID
+            "file_path": str,       # 需求文件路径
+            "type": str,            # 需求类型(business/tech)
+            "version": str          # 版本号
         }
     )
+    
     MSG_REQUIREMENT_TECH_ANALYSIS = MessageSchema(
         name="requirement:tech_analysis",
-        desc="技术分析任务",
+        desc="技术需求分析任务",
         content={
-            "req_id": str,          # 原始需求ID
-            "biz_req_id": str,      # 关联的业务需求ID（RQ-开头）
-            "file_path": str        # 原始需求文件路径
+            "req_id": str,          # 需求ID
+            "biz_req_id": str,      # 关联业务需求ID
+            "file_path": str,       # 需求文件路径
+            "version": str          # 版本号
         }
     )
+    
+    # BA分析流程消息
+    MSG_BA_ANALYSIS_STARTED = MessageSchema(
+        name="ba_analysis:started",
+        desc="BA开始分析通知",
+        content={
+            "req_id": str,          # 需求ID
+            "start_time": str       # 开始时间
+        }
+    )
+    
     MSG_BA_ANALYSIS_DONE = MessageSchema(
-        name="ba_analysis_done",
-        desc="业务分析完成通知",
+        name="ba_analysis:done",
+        desc="BA分析完成通知",
         content={
-            "req_id": str,          # 原始需求ID
-            "standard_req": dict,  # 标准业务需求（符合spec）
-            "user_stories": list,   # 用户故事列表
-            "output_files": list    # 生成的文档路径列表
+            "req_id": str,          # 需求ID
+            "standard_req": dict,    # 标准化需求
+            "user_stories": list,    # 用户故事列表
+            "output_files": list     # 输出文件列表
         }
     )
-    MSG_EA_ANALYSIS_DONE = MessageSchema(
-        name="ea_analysis_done",
-        desc="技术分析完成通知",
+    
+    MSG_BA_ANALYSIS_FAILED = MessageSchema(
+        name="ba_analysis:failed",
+        desc="BA分析失败通知",
         content={
-            "req_id": str,          # 原始需求ID
-            "tech_req": dict,       # 标准技术需求
-            "output_files": list    # 生成的架构文档路径
+            "req_id": str,          # 需求ID
+            "error": str,           # 错误信息
+            "fail_time": str        # 失败时间
         }
     )
-    MSG_BA_ANALYSIS_STARTED = MessageType("ba_analysis:started")
-    MSG_EA_ANALYSIS_STARTED = MessageType("ea_analysis:started")
-    MSG_TASK_UPDATE = MessageType("task:update")
+    
+    # 架构分析消息
+    MSG_BUSINESS_ARCH = MessageSchema(
+        name="architecture:business",
+        desc="业务架构分析",
+        content={
+            "version": str,         # 版本号
+            "biz_requirements": list # 业务需求列表
+        }
+    )
+    
+    MSG_TECH_ARCH = MessageSchema(
+        name="architecture:technical",
+        desc="技术架构分析",
+        content={
+            "version": str,         # 版本号
+            "tech_requirements": list # 技术需求列表
+        }
+    )
+    
+    # 评审相关消息
+    MSG_PRD = MessageSchema(
+        name="prd:review",
+        desc="PRD评审",
+        content={
+            "version": str,         # 版本号
+            "ai_review": dict,      # AI评审结果
+            "requirements": list     # 需求列表
+        }
+    )
+    
+    MSG_PRD_REVISED = MessageSchema(
+        name="prd:revised",
+        desc="PRD修订确认",
+        content={
+            "version": str,         # 版本号
+            "approved_reqs": list,  # 通过的需求列表
+            "review_comments": dict  # 评审意见
+        }
+    )
+    
+    # 任务跟踪消息
+    MSG_TASK_UPDATE = MessageSchema(
+        name="task:update",
+        desc="任务状态更新",
+        content={
+            "task_id": str,         # 任务ID
+            "status": str,          # 任务状态
+            "progress": float,      # 进度百分比
+            "update_time": str      # 更新时间
+        }
+    )
 
     def __init__(
         self,

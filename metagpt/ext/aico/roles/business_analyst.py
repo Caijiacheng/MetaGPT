@@ -20,6 +20,7 @@ from ..actions.ba_action import ParseBizRequirement, Update4ABusiness
 from pathlib import Path
 import logging
 from datetime import datetime
+from metagpt.ext.aico.services.dco_manager_service import DocManagerService, DocType
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,16 @@ class AICOBusinessAnalyst(AICOBaseRole):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.set_actions([ParseBizRequirement, Update4ABusiness])
+        self.doc_manager = DocManagerService(self.project_root)
         
     async def _act(self) -> None:
-        """纯消息驱动模式（文档5.2节）"""
-        async for msg in self.observe(AICOEnvironment.MSG_REQ_BIZ_ANALYSIS):
+        """纯消息驱动模式"""
+        async for msg in self.observe(AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS.name):
             try:
                 # 通知PM分析开始
-                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_STARTED, {
-                    "req_id": msg.content["req_id"]
+                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_STARTED.name, {
+                    "req_id": msg.content["req_id"],
+                    "start_time": datetime.now().isoformat()
                 })
                 
                 result = await self._process_requirement(msg.content)
@@ -50,51 +53,36 @@ class AICOBusinessAnalyst(AICOBaseRole):
                 stories_file = self._save_user_stories(result["biz_req_id"], result["version"])
                 
                 # 返回处理结果给PM
-                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_DONE, {
+                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name, {
                     "req_id": msg.content["req_id"],
-                    "biz_req_id": result["biz_req_id"],
-                    "architecture_file": result["architecture_file"],
-                    "user_stories_file": str(stories_file)
+                    "standard_req": result["standard_req"],
+                    "user_stories": result["user_stories"],
+                    "output_files": [
+                        str(stories_file),
+                        result["architecture_file"]
+                    ]
                 })
                 
             except Exception as e:
                 logger.error(f"需求分析失败: {msg.content['req_id']}")
-                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_FAILED, {
+                await self.publish(AICOEnvironment.MSG_BA_ANALYSIS_FAILED.name, {
                     "req_id": msg.content["req_id"],
-                    "error": str(e)
+                    "error": str(e),
+                    "fail_time": datetime.now().isoformat()
                 })
 
     def _save_user_stories(self, project_id: str, version: str) -> Path:
-        """生成独立版本的用户故事文档"""
-        stories_dir = self.project_root / "docs/requirements/user_stories"
-        stories_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 版本文件路径
-        filename = f"{project_id}_user_stories_v{version}.md"
-        file_path = stories_dir / filename
-        
-        # 仅当文件不存在时创建新版本
-        if not file_path.exists():
-            content = self._generate_story_content(version)
-            file_path.write_text(content, encoding="utf-8")
-        else:
-            logger.warning(f"用户故事版本已存在: {filename}")
-        
-        return file_path
-
-    def _generate_story_content(self, version: str) -> str:
-        """生成当前版本内容"""
-        content = f"# 项目用户故事（版本: {version}）\n\n"
-        content += f"**生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-        
-        for std_req_id, story_list in self.user_stories.items():
-            content += f"## 标准需求 {std_req_id}\n"
-            for story in story_list:
-                content += f"### 用户故事 {story['story_id']}\n"
-                content += f"**标题**: {story['title']}\n"
-                content += f"**状态**: {story['status']}\n"
-                content += f"**验收标准**:\n{story['acceptance_criteria']}\n\n"
-        return content
+        """生成用户故事文档"""
+        content = self.doc_manager.template.user_story(
+            version=version,
+            stories=self.user_stories
+        )
+        return self.doc_manager.save_document(
+            doc_type=DocType.USER_STORY,
+            content=content,
+            version=version,
+            req_id=project_id
+        )
 
     async def _process_requirement(self, req_info: dict) -> dict:
         """处理业务需求分析核心逻辑"""
