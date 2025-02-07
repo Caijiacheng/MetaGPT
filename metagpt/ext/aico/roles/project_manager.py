@@ -67,47 +67,37 @@ class AICOProjectManager(Role):
 
     def _validate_project_structure(self):
         """校验目录结构符合规范"""
-        required_dirs = [
-            "docs/requirements/raw",
-            "docs/requirements/analyzed",
-            "docs/ea/biz_arch",
-            "docs/ea/tech_arch",
-            "docs/design/prd",
-            "docs/design/services",
-            "docs/design/tests",
-            "releases"
+        # 使用DocType枚举定义需要校验的目录类型
+        required_doc_types = [
+            DocType.REQUIREMENT_RAW,
+            DocType.REQUIREMENT_ANALYZED,
+            DocType.BUSINESS_ARCH,
+            DocType.TECH_ARCH,
+            DocType.PRD,
+            DocType.SERVICE_DESIGN,
+            DocType.TEST_CASE,
+            DocType.PROJECT_TRACKING
         ]
         
         missing_dirs = []
-        for d in required_dirs:
-            if not (self.project_root / d).exists():
-                missing_dirs.append(d)
-        
+        for doc_type in required_doc_types:
+            # 通过DocManagerService获取标准路径（不带版本号）
+            expected_path = self.doc_manager.get_doc_path(
+                doc_type=doc_type,
+                version="",  # 基础目录不需要版本号
+                create_dir=False
+            )
+            # 转换为相对于项目根目录的路径
+            relative_path = expected_path.relative_to(self.project_root)
+            
+            if not expected_path.exists():
+                missing_dirs.append(str(relative_path))
+
         if missing_dirs:
             logger.error(f"项目结构不完整，缺失目录: {missing_dirs}")
             raise ValueError("Invalid project structure")
 
 
-    def _sync_specs(self, force: bool = False):
-        """使用DocManagerService获取规范路径"""
-        global_spec_root = Path(config.workspace.specs)
-        project_spec_dir = self.doc_manager.get_doc_path(
-            DocType.SPEC_PM,
-            version=""
-        ).parent  # 获取规范目录
-        
-        # 同步规范文件...
-
-    def get_spec(self, spec_type: str) -> str:
-        """获取规范内容（项目规范优先）"""
-        project_spec = self.project_root / "docs/aico/specs" / f"{spec_type}_spec.md"
-        global_spec = Path(config.workspace.specs) / f"{spec_type}_spec.md"
-        
-        if project_spec.exists():
-            return project_spec.read_text(encoding="utf-8")
-        elif global_spec.exists():
-            return global_spec.read_text(encoding="utf-8")
-        raise FileNotFoundError(f"规范文件不存在: {spec_type}")
 
     def _create_tracking_file(self):
         """通过DocManagerService获取跟踪表路径"""
