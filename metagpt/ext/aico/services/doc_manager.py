@@ -1,12 +1,13 @@
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Protocol
 from enum import Enum
-from pydantic import Field
+from pydantic import Field, BaseModel
+import os
 
 from metagpt.document import Document, Repo
 from metagpt.utils.embedding import get_embedding
-from metagpt.provider.base_llm import BaseLLM
+
 from metagpt.utils.redis import Redis
 from metagpt.config2 import config
 
@@ -68,7 +69,7 @@ class AICORepo(Repo):
         DocType.TECH_REQUIREMENT: "docs/requirements/analyzed/{version}/req-{req_id}/tech_analysis.md",
         DocType.PRD: "docs/design/prd/{version}/prd.md",
         DocType.SERVICE_DESIGN: "docs/design/services/{service}/{version}/service_design.md",
-        DocType.API_SPEC: "docs/design/services/{service}/{version}/api_spec.yaml",
+        DocType.API_SPEC: "docs/api/{version}/spec.md",
         DocType.TEST_CASE: "docs/design/tests/{service}/{version}/test_cases.md",
         DocType.TEST_REPORT: "releases/{version}/qa_report.md"
     }
@@ -91,21 +92,35 @@ class AICORepo(Repo):
     
     def update_version(self, new_version: str):
         """更新仓库版本号"""
+        # 创建新版本目录结构
+        required_dirs = [
+            f"docs/requirements/analyzed/{new_version}",
+            f"docs/ea/tech_arch/{new_version}",
+            f"docs/api/{new_version}",
+            f"releases/{new_version}"
+        ]
+        for d in required_dirs:
+            (self.path / d).mkdir(parents=True, exist_ok=True)
+        
+        # 更新版本文件
         version_file = self.path / "VERSION"
         version_file.write_text(new_version, encoding="utf-8")
         self._current_version = new_version
     
     def get_doc_path(self, doc_type: DocType, **context) -> Path:
-        """生成符合AICO规范的文档路径"""
+        """生成绝对路径"""
         template = self._PATH_TEMPLATES[doc_type]
-        formatted = template.format(version=self.current_version, **context)
-        return Path(formatted)
+        # 自动注入当前版本
+        rel_path = template.format(
+            version=self.current_version,
+            **{k:v for k,v in context.items() if k != "version"}
+        )
+        return self.path / rel_path  # 生成绝对路径
     
     def ensure_directory(self, doc_type: DocType, **context):
-        """确保文档目录存在"""
-        doc_path = self.get_doc_path(doc_type, **context)
-        full_path = self.path / doc_path
-        full_path.parent.mkdir(parents=True, exist_ok=True)
+        """确保所有父目录存在"""
+        full_path = self.get_doc_path(doc_type, **context)
+        full_path.parent.mkdir(parents=True, exist_ok=True)  # 递归创建目录
     
     def _classify_document(self, path: Path) -> str:
         """根据路径分类文档类型"""
@@ -129,10 +144,12 @@ class AICODocument(Document):
     - 维护文档内容与存储路径的映射关系
     - 实现文档与持久化存储的交互
     """
-    doc_type: DocType = Field(default=DocType.PROJECT_TRACKING)
-    version: str = Field(default="latest")
-    reviews: List[str] = Field(default_factory=list)
-    metadata: Dict[str, str] = Field(default_factory=dict)
+    content: str
+    path: Path
+    doc_type: DocType
+    version: str
+    components: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
     
     @classmethod
     def create(
@@ -151,6 +168,17 @@ class AICODocument(Document):
             version=repo.current_version,
             metadata=context
         )
+    
+    def get_metadata(self) -> dict:
+        return {
+            "doc_type": self.doc_type.value,
+            "version": self.version,
+            "path": str(self.path.relative_to(self.repo.path))
+        }
+    
+    def rag_key(self) -> str:
+        """实现RAGObject接口，提供检索用的文本内容"""
+        return f"{self.doc_type.value}_{self.version}\n{self.content}"
 
 class AICOTemplate:
     """
@@ -171,14 +199,15 @@ class AICOTemplate:
             DocType.PRD: cls._prd_template,
             DocType.SERVICE_DESIGN: cls._service_design_template,
             DocType.TEST_CASE: cls._test_case_template,
-            DocType.REQUIREMENT_ANALYZED: cls._requirement_analysis_template
+            DocType.REQUIREMENT_ANALYZED: cls._requirement_analysis_template,
+            DocType.API_SPEC: cls._api_spec_template
         }.get(doc_type, cls._default_template)
         return generator(data)
     
     @staticmethod
     def _default_template(data: dict) -> str:
         """默认模板"""
-        return f"# {data.get('title', 'Untitled Document')}\n\n{data.get('content', '')}"
+        raise NotImplementedError("未实现该文档类型的模板生成")
     
     @staticmethod
     def _user_story_template(data: dict) -> str:
@@ -261,6 +290,23 @@ class AICOTemplate:
             "## 用户故事\n"
             f"{stories}"
         )
+    
+    @staticmethod
+    def _api_spec_template(data: dict) -> str:
+        """API规范模板"""
+        apis = "\n".join(
+            f"### {api['method']} {api['path']}\n"
+            f"- 功能: {api['description']}\n"
+            f"- 请求参数: {api.get('params', '无')}\n"
+            f"- 响应格式: {api.get('response', 'application/json')}"
+            for api in data["apis"]
+        )
+        return (
+            f"# {data['service']}服务接口规范\n"
+            f"**版本**: {data.get('version', '1.0.0')}\n\n"
+            "## 接口列表\n"
+            f"{apis}"
+        )
 
 class AICODocManager:
     """
@@ -270,42 +316,40 @@ class AICODocManager:
     - 维护文档搜索索引
     - 实现基于语义的文档检索
     - 管理文档版本历史
-    - 与LLM集成生成文档摘要
     - 协调仓库、模板、存储等组件的交互
     """
     
-    def __init__(self, repo: AICORepo, llm: Optional[BaseLLM] = None):
+    def __init__(self, repo: AICORepo, embed_model = None, llm = None):
         self.repo = repo
-        self.llm = llm
         self.redis = Redis(config.redis)
-        self.search_engine = self._init_search_engine()
+        self.search_engine = self._init_search_engine(embed_model, llm)
     
-    def _init_search_engine(self) -> SimpleEngine:
+    def _init_search_engine(self, embed_model = None, llm = None) -> SimpleEngine:
         """初始化文档检索引擎"""
         documents = [
-            {
-                "content": doc.content,
-                "metadata": {
-                    "doc_type": doc.doc_type.value,
-                    "version": doc.version,
-                    "path": str(doc.path.relative_to(self.repo.path))
-                }
-            }
-            for doc in self.repo.get_text_documents()
+            doc for doc in self.repo.get_text_documents()
             if isinstance(doc, AICODocument)
         ]
-        return SimpleEngine.from_objs(
+        # 使用mock embedding替代真实调用
+        embed_model = embed_model if embed_model else get_embedding()
+
+        engine = SimpleEngine.from_objs(
             objs=documents,
             retriever_configs=[FAISSRetrieverConfig()],
-            embed_model=get_embedding()
+            embed_model=embed_model,
+            llm=llm
         )
+        return engine
     
     async def create_document(self, doc_type: DocType, **context) -> AICODocument:
-        """创建并存储新文档"""
-        # 生成内容
+        """创建文档时自动注入当前版本"""
+        # 自动添加当前版本到上下文
+        context = {
+            **context,
+            "version": self.repo.current_version  # 统一管理版本
+        }
         content = AICOTemplate.generate(doc_type, context)
         
-        # 创建文档对象
         doc = AICODocument.create(
             repo=self.repo,
             doc_type=doc_type,
@@ -317,17 +361,14 @@ class AICODocManager:
         self.repo.ensure_directory(doc_type, **context)
         
         # 持久化存储
-        self.repo.set(str(doc.path.relative_to(self.repo.path)), doc.content)
+        full_path = doc.path  # 直接使用get_doc_path生成的绝对路径
+        full_path.write_text(doc.content)
+        
+
+
         
         # 更新搜索索引
-        self.search_engine.add_objs([{
-            "content": doc.content,
-            "metadata": {
-                "doc_type": doc_type.value,
-                "version": self.repo.current_version,
-                "path": str(doc.path.relative_to(self.repo.path))
-            }
-        }])
+        self.search_engine.add_objs([doc])
         
         # 缓存元数据
         await self._cache_document_metadata(doc)
@@ -357,20 +398,37 @@ class AICODocManager:
         )
     
     async def search_documents(self, query: str, doc_types: List[DocType] = None, limit: int = 5) -> List[dict]:
-        """语义化文档搜索"""
-        results = []
-        retrieved = await self.search_engine.aretrieve(query)
+        """语义化文档搜索
         
-        for item in retrieved:
-            if doc_types and DocType(item.metadata["doc_type"]) not in doc_types:
+        Args:
+            query: 搜索查询语句
+            doc_types: 文档类型过滤列表,为空则搜索所有类型
+            limit: 返回结果数量限制
+            
+        Returns:
+            List[dict]: 搜索结果列表,每个结果包含content、metadata和score
+        """
+        # 从上下文看,search_engine是SimpleEngine实例
+        # aretrieve返回的是NodeWithScore列表
+        nodes = await self.search_engine.aretrieve(query)
+        
+        results = []
+        for node in nodes:
+            # 检查文档类型是否匹配过滤条件
+            if doc_types and DocType(node.metadata["doc_type"]) not in doc_types:
                 continue
+            print(node.metadata)
+            print(node.text)
+            print(node.score)
             results.append({
-                "content": item.content,
-                "metadata": item.metadata,
-                "score": item.score
+                "content": node.text, 
+                "metadata": node.metadata,
+                "score": node.score
             })
+            
             if len(results) >= limit:
                 break
+                
         return sorted(results, key=lambda x: x["score"], reverse=True)
     
     async def get_version_history(self, doc_type: DocType) -> List[AICODocument]:
@@ -383,17 +441,17 @@ class AICODocManager:
                 history.append(AICODocument.parse_raw(data))
         return sorted(history, key=lambda x: x.version, reverse=True)
     
-    async def generate_summary(self, content: str, max_words: int = 200) -> str:
-        """生成文档摘要"""
-        if self.llm is None:
-            return content[:max_words]
+    # async def generate_summary(self, content: str, max_words: int = 200) -> str:
+    #     """生成文档摘要"""
+    #     if self.llm is None:
+    #         return content[:max_words]
         
-        prompt = (
-            f"请为以下内容生成不超过{max_words}字的摘要：\n\n"
-            f"{content}\n\n"
-            "摘要："
-        )
-        return await self.llm.aask(prompt)
+    #     prompt = (
+    #         f"请为以下内容生成不超过{max_words}字的摘要：\n\n"
+    #         f"{content}\n\n"
+    #         "摘要："
+    #     )
+    #     return await self.llm.aask(prompt)
     
     def get_specification(self, spec_type: DocType) -> str:
         """获取项目规范内容"""
@@ -401,8 +459,4 @@ class AICODocManager:
         full_path = self.repo.path / spec_path
         if full_path.exists():
             return full_path.read_text(encoding="utf-8")
-        # 回退到全局规范
-        global_spec = Path(config.workspace.specs) / f"{spec_type.value}_spec.md"
-        if global_spec.exists():
-            return global_spec.read_text(encoding="utf-8")
         raise FileNotFoundError(f"未找到规范文件：{spec_type.value}")

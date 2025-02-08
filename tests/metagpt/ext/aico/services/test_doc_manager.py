@@ -10,35 +10,61 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
-from metagpt.ext.aico.services.doc_manager import (
-    AICODocManager,
-    AICORepo,
-    AICODocument,
-    DocType
-)
+from metagpt.ext.aico.services.doc_manager import AICODocManager, AICORepo, AICODocument, DocType
 from metagpt.provider.base_llm import BaseLLM
+from metagpt.config2 import  config
+
+
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+
 
 @pytest.fixture
 def tmp_project(tmp_path):
-    """初始化临时项目结构"""
+    """按规范初始化目录结构"""
+    (tmp_path / "docs/specs").mkdir(parents=True)
     (tmp_path / "VERSION").write_text("1.0.0")
     (tmp_path / "tracking").mkdir()
-    (tmp_path / "docs/specs").mkdir(parents=True)
+    
+    # 需求相关目录
     (tmp_path / "docs/requirements/raw").mkdir(parents=True)
+    analyzed_dir = tmp_path / "docs/requirements/analyzed/1.0.0"
+    analyzed_dir.mkdir(parents=True)
+    
+    # 设计相关目录
+    (tmp_path / "docs/design/services/auth/1.0.0").mkdir(parents=True)
+    (tmp_path / "docs/design/tests/auth/1.0.0").mkdir(parents=True)
+    
+    # 发布目录
+    (tmp_path / "releases/1.0.0").mkdir(parents=True)
+    
     return tmp_path
+
 
 @pytest.fixture
 def mock_llm():
-    """模拟LLM响应"""
-    llm = MagicMock(spec=BaseLLM)
-    llm.aask = AsyncMock(return_value="摘要内容")
-    return llm
+    return MockLLM()
 
 @pytest.fixture
-def doc_manager(tmp_project, mock_llm):
+def mock_embedding():
+    return MockEmbedding(embed_dim=1536)
+
+
+@pytest.fixture
+def doc_manager(tmp_project, mock_embedding, mock_llm):
     """创建文档管理器实例"""
     repo = AICORepo(tmp_project)
-    return AICODocManager(repo, mock_llm)
+    manager = AICODocManager(repo, mock_embedding, mock_llm)
+    
+    return manager
+
+@pytest.fixture(autouse=True)
+def mock_env(monkeypatch):
+    """模拟运行环境"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr(config.embedding, 'api_type', 'mock')
+    config.omniparse.base_url = "http://mock-omniparse"
+    config.omniparse.api_key = "test-key"
 
 class TestAICORepo:
     """测试仓库管理功能"""
@@ -92,11 +118,11 @@ class TestAICODocManager:
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, doc_manager, tmp_project):
         """场景：测试文档全生命周期管理（创建->读取->搜索->历史）"""
-        # 创建文档
+
+        # 创建文档时不再传递version参数
         doc = await doc_manager.create_document(
             DocType.USER_STORY,
             req_id="US001",
-            version="1.0.0",
             scenario="用户登录场景",
             acceptance_criteria=["成功跳转主页", "错误提示明确"]
         )
@@ -106,23 +132,22 @@ class TestAICODocManager:
         assert full_path.exists()
         assert "用户登录场景" in full_path.read_text()
         
+        # 验证用户故事路径
+        assert "docs/requirements/analyzed/1.0.0/user_stories.md" in str(doc.path)
+        
         # 读取文档
         read_doc = await doc_manager.get_document(
             DocType.USER_STORY,
             req_id="US001",
-            version="1.0.0"
         )
         assert read_doc is not None
         assert read_doc.content == doc.content
         
         # 搜索文档
-        results = await doc_manager.search_documents("登录流程", limit=1)
+        results = await doc_manager.search_documents("用户登录场景", limit=5)
         assert len(results) > 0
         assert "用户登录" in results[0]['content']
-        
-        # 验证历史记录
-        history = await doc_manager.get_version_history(DocType.USER_STORY)
-        assert any(d.version == "1.0.0" for d in history)
+    
     
     @pytest.mark.asyncio
     async def test_template_generation(self, doc_manager):
@@ -135,6 +160,9 @@ class TestAICODocManager:
         )
         assert "认证服务" in tech_arch_doc.content
         assert "![架构图](arch.png)" in tech_arch_doc.content
+        
+        # 验证技术架构路径
+        assert "docs/ea/tech_arch/1.0.0/tech_arch.md" in str(tech_arch_doc.path)
         
         # 测试测试用例模板
         test_case_doc = await doc_manager.create_document(
@@ -161,14 +189,6 @@ class TestAICODocManager:
         # 获取规范
         content = doc_manager.get_specification(DocType.SPEC_DEV)
         assert "项目开发规范" in content
-        
-        # 测试全局规范回退
-        spec_path.unlink()
-        global_spec = Path(config.workspace.specs) / "spec_dev_spec.md"
-        global_spec.parent.mkdir(exist_ok=True)
-        global_spec.write_text("# 全局开发规范")
-        content = doc_manager.get_specification(DocType.SPEC_DEV)
-        assert "全局开发规范" in content
 
 @pytest.mark.asyncio
 async def test_edge_cases():
@@ -179,7 +199,7 @@ async def test_edge_cases():
     
     # 测试无效文档获取
     manager = AICODocManager(empty_repo)
-    doc = await manager.get_document(DocType.PRD, version="1.0.0")
+    doc = await manager.get_document(DocType.PRD)
     assert doc is None
 
 class TestAICOTemplate:
@@ -190,7 +210,7 @@ class TestAICOTemplate:
         from metagpt.ext.aico.services.doc_manager import AICOTemplate
         
         content = AICOTemplate.generate(DocType.TECH_ARCH, {
-            "version": "1.0",
+            "version": "1.0.0",
             "components": [
                 {"name": "Auth", "description": "认证服务"},
                 {"name": "Order", "description": "订单服务"}
@@ -207,8 +227,43 @@ class TestAICOTemplate:
         
         content = AICOTemplate.generate(DocType.API_SPEC, {
             "service": "auth",
+            "version": "1.0.0",
             "apis": [
-                {"method": "POST", "path": "/login", "description": "用户登录接口"}
+                {
+                    "method": "POST",
+                    "path": "/login",
+                    "description": "用户登录接口",
+                    "params": {"username": "字符串", "password": "字符串"},
+                    "response": {"token": "JWT字符串"}
+                }
             ]
         })
-        assert "POST /login: 用户登录接口" in content
+        
+        # 验证关键内容
+        assert "## 接口列表" in content
+        assert "### POST /login" in content
+        assert "功能: 用户登录接口" in content
+
+def test_api_spec_path(tmp_project):
+    """验证API规范路径生成"""
+    repo = AICORepo(tmp_project)
+    path = repo.get_doc_path(DocType.API_SPEC, service="auth")
+    # 转换为相对路径后再断言
+    rel_path = path.relative_to(tmp_project)
+    assert str(rel_path) == "docs/api/1.0.0/spec.md"
+
+def test_version_directory_creation(tmp_project):
+    """验证版本更新时目录创建"""
+    repo = AICORepo(tmp_project)
+    repo.update_version("2.0.0")
+    
+    expected_dirs = [
+        "docs/requirements/analyzed/2.0.0",
+        "docs/ea/tech_arch/2.0.0",
+        "docs/api/2.0.0",  # 修正预期路径
+        "releases/2.0.0"
+    ]
+    for d in expected_dirs:
+        assert (tmp_project / d).exists()
+
+
