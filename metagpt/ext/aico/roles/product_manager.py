@@ -46,12 +46,3 @@ class AICOProductManager(AICOBaseRole):
                 result = await action.run(msg.content)
                 await self.publish(msg.cause_by, result)
 
-"""
-@Modified By: Jiacheng Cai, 2023/12/15
-    TODO: 需要在AICO规范中明确以下内容:
-    1. PRD文档的具体模板和评审标准
-    2. 产品需求变更的处理流程
-    3. 与BA角色在需求分析阶段的分工
-    4. 产品验收标准的制定规范
-    5. 产品特性的优先级评估标准
-""" 
