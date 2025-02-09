@@ -6,12 +6,11 @@
 # 运行测试
 # pytest tests/metagpt/ext/aico/services/test_doc_manager.py -v --cov=metagpt --cov-report=term
 
+# coverage report --include="metagpt/ext/aico/**/*.py"
+
 import pytest
 from pathlib import Path
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
 from metagpt.ext.aico.services.doc_manager import AICODocManager, AICORepo, AICODocument, DocType
-from metagpt.provider.base_llm import BaseLLM
 from metagpt.config2 import  config
 
 
