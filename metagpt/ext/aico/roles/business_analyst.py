@@ -13,7 +13,6 @@
   4. 发布分析结果到环境中
 """
 
-from typing import Dict
 from metagpt.roles import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ba_action import ParseBizRequirement, Update4ABusiness
