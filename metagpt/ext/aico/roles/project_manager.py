@@ -338,32 +338,32 @@ class AICOProjectManager(Role):
         """完全通过VersionService生成"""
         return self.version_svc.bump(change_type)
 
-    def generate_version_report(self, version: str) -> str:
-        """生成版本变更报告"""
-        history = self.tracking_svc.get_version_history()
-        target = next((h for h in history if h["version"] == version), None)
+    # def generate_version_report(self, version: str) -> str:
+    #     """生成版本变更报告"""
+    #     history = self.tracking_svc.get_version_history()
+    #     target = next((h for h in history if h["version"] == version), None)
         
-        if not target:
-            return f"版本 {version} 未找到"
+    #     if not target:
+    #         return f"版本 {version} 未找到"
         
-        report = f"# 版本变更报告 ({version})\n\n"
-        report += f"**生成时间**: {target['time']}\n"
-        report += f"**关联文档**: [{target['doc_path']}]({target['doc_path']})\n\n"
+    #     report = f"# 版本变更报告 ({version})\n\n"
+    #     report += f"**生成时间**: {target['time']}\n"
+    #     report += f"**关联文档**: [{target['doc_path']}]({target['doc_path']})\n\n"
         
-        report += "## 主要变更\n"
-        for change in target["changes"]:
-            report += f"- {change}\n"
+    #     report += "## 主要变更\n"
+    #     for change in target["changes"]:
+    #         report += f"- {change}\n"
         
-        report += "\n## 关联需求\n"
-        for req_id in target["related_reqs"]:
-            req_info = self.tracking_svc.get_requirement_info(req_id)
-            report += f"- {req_id}: {req_info.get('description', '')}\n"
+    #     report += "\n## 关联需求\n"
+    #     for req_id in target["related_reqs"]:
+    #         req_info = self.tracking_svc.get_requirement_info(req_id)
+    #         report += f"- {req_id}: {req_info.get('description', '')}\n"
             
-            req_status = self.tracking_svc.get_requirement_status(req_id)
-            if req_status != "评审通过":
-                logger.warning(f"需求 {req_id} 状态异常")
+    #         req_status = self.tracking_svc.get_requirement_status(req_id)
+    #         if req_status != "评审通过":
+    #             logger.warning(f"需求 {req_id} 状态异常")
         
-        return report
+    #     return report
 
     def _determine_version_change(self) -> str:
         """根据文档6.1.3判断版本变更类型"""

@@ -67,16 +67,6 @@ class TaskTrackingColumns(Enum):
     ARTIFACTS = 13       # 关联产出物
     NOTES = 14           # 备注
 
-# class VersionHistoryColumns(Enum):
-#     """版本历史表列定义"""
-#     VERSION_NUMBER = 1  # 版本号
-#     RECORD_TIME = 2    # 记录时间
-#     DOCUMENT_PATH = 3   # 文档路径
-#     DOCUMENT_TYPE = 4   # 文档类型
-#     CHANGE_TYPE = 5     # 变更类型
-#     CHANGE_CONTENT = 6   # 变更内容
-#     RELATED_REQ_ID = 7   # 关联需求ID
-
 class SheetType(Enum):
     RAW_REQUIREMENT = SheetConfig(
         name="原始需求",
@@ -108,11 +98,6 @@ class SheetType(Enum):
         ],
         columns=TaskTrackingColumns
     )
-    VERSION_HISTORY = SheetConfig(
-        name="版本历史",
-        headers=["版本号", "记录时间", "文档路径", "文档类型", "变更类型", "变更内容", "关联需求"],
-        columns=VersionHistoryColumns
-    )
 
     @classmethod
     def get_required_sheets(cls):
@@ -121,6 +106,7 @@ class SheetType(Enum):
 
 class IDConfig:
     """ID生成配置"""
+    DEFAULT_PRIORITY = "中"  # 新增默认优先级
     PROJECT_PREFIX = "PM"
     TASK_TYPES = {
         "dev": "DEV",

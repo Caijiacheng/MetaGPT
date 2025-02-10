@@ -431,15 +431,15 @@ class AICODocManager:
                 
         return sorted(results, key=lambda x: x["score"], reverse=True)
     
-    async def get_version_history(self, doc_type: DocType) -> List[AICODocument]:
-        """获取文档版本历史"""
-        keys = await self.redis.keys(f"doc:{doc_type.value}:*")
-        history = []
-        for key in keys:
-            data = await self.redis.get(key)
-            if data:
-                history.append(AICODocument.parse_raw(data))
-        return sorted(history, key=lambda x: x.version, reverse=True)
+    # async def get_version_history(self, doc_type: DocType) -> List[AICODocument]:
+    #     """获取文档版本历史"""
+    #     keys = await self.redis.keys(f"doc:{doc_type.value}:*")
+    #     history = []
+    #     for key in keys:
+    #         data = await self.redis.get(key)
+    #         if data:
+    #             history.append(AICODocument.parse_raw(data))
+    #     return sorted(history, key=lambda x: x.version, reverse=True)
     
     # async def generate_summary(self, content: str, max_words: int = 200) -> str:
     #     """生成文档摘要"""

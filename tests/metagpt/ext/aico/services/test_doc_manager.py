@@ -6,7 +6,7 @@
 # 运行测试
 # pytest tests/metagpt/ext/aico/services/test_doc_manager.py -v --cov=metagpt --cov-report=term
 
-# coverage report --include="metagpt/ext/aico/**/*.py"
+# coverage report --include="metagpt/ext/aico/**/doc_manager.py"
 
 import pytest
 from pathlib import Path

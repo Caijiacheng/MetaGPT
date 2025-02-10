@@ -47,7 +47,7 @@ class ProjectTrackingManager:
         self.file_path = Path(file_path) if isinstance(file_path, str) else file_path
         self.project_root = Path(project_root) if isinstance(project_root, str) else project_root
         self.wb = self._init_workbook()
-        self._validate_column_index(SheetType.RAW_REQUIREMENT.value.columns)  # 添加校验
+        self._validate_column_index(SheetType.RAW_REQUIREMENT.value.columns)
         self._validate_column_index(SheetType.REQUIREMENT_MGMT.value.columns)
         self._setup_sheets()
         self.requirement_counter = self._load_counter("req")
@@ -65,9 +65,12 @@ class ProjectTrackingManager:
             return wb
     
     def _setup_sheets(self):
-        """根据配置初始化工作表"""
-        required_sheets = {st.value.name: st.value.headers for st in SheetType}
-        required_sheets["版本历史"] = ["版本号", "记录时间", "文档路径", "文档类型", "变更类型", "变更内容", "关联需求"]
+        """根据配置初始化工作表（修复required_sheets定义）"""
+        required_sheets = {
+            st.value.name: st.value.headers 
+            for st in SheetType 
+            # 确保SheetType枚举中已移除VERSION_HISTORY
+        }
         
         # 创建缺失的工作表
         for sheet_name, headers in required_sheets.items():
@@ -82,18 +85,19 @@ class ProjectTrackingManager:
 
     
     # 原始需求表操作 --------------------------------------------------
-    def get_raw_requirement_status(self, file_path: str) -> Optional[Dict]:
-        """获取原始需求状态（修复列索引）"""
+    def get_raw_requirement_status(self, file_path: str) -> Dict:
+        """获取原始需求状态（补充complete_time）"""
         ws = self.wb[SheetType.RAW_REQUIREMENT.value.name]
         cols = SheetType.RAW_REQUIREMENT.value.columns
         
         for row in ws.iter_rows(min_row=2):
-            if row[cols.RAW_FILE_PATH.value-1].value == file_path:  # 使用修正后的列索引
+            if row[cols.RAW_FILE_PATH.value-1].value == file_path:
                 return {
                     "status": row[cols.STATUS.value-1].value,
-                    "ba_time": row[cols.BA_PARSE_TIME.value-1].value
+                    "ba_time": row[cols.BA_PARSE_TIME.value-1].value,
+                    "complete_time": row[cols.COMPLETE_TIME.value-1].value  # 新增字段
                 }
-        return None
+        return {"status": "待分析", "ba_time": None, "complete_time": None}
         
     _VALID_TRANSITIONS = {
         "待分析": ["已分析", "已驳回"],
@@ -133,51 +137,44 @@ class ProjectTrackingManager:
     # 需求管理表操作 --------------------------------------------------
     @validate_id_format(r"^REQ-PM\d{6}$")
     def add_standard_requirement(self, data: dict):
-        """添加需求时处理优先级字段"""
-        if "priority" not in data or data["priority"] not in ["高", "中", "低"]:
+        """添加需求时处理优先级字段（增加name校验）"""
+        if "name" not in data:
+            raise ValueError("需求名称不能为空")
+        
+        data.setdefault("priority", IDConfig.DEFAULT_PRIORITY)
+        
+        if data["priority"] not in ["高", "中", "低"]:
             raise ValueError("优先级必须为高/中/低")
-        # 其他验证...
-        
-        # 自动生成需求ID
-        req_id = self._generate_req_id()
-        data["id"] = req_id
-        
-        # 原有验证逻辑保持不变
-        if not re.match(rf"^REQ-{IDConfig.PROJECT_PREFIX}\d{{4}}\d{{{IDConfig.REQUIREMENT_SEQ_LENGTH}}}$", req_id):
-            raise ValueError("需求ID格式非法")
         
         ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
         cols = SheetType.REQUIREMENT_MGMT.value.columns
         
-        # 设置默认优先级为"中"
-        data.setdefault("priority", "中")
-        
-        valid_priorities = ["高", "中", "低"]
-        if data.get("priority", "") not in valid_priorities:
-            raise ValueError(f"优先级必须是{valid_priorities}之一")
-        
-        new_row = [
-            data.get("id"),
-            data.get("raw_file"),
-            data.get("name"),
-            data.get("description"),
-            data.get("source"),
-            data.get("priority"),
-            data.get("status"),
-            data.get("owner"),
-            data.get("submit_time"),
-            data.get("due_date"),
-            data.get("acceptance"),
-            data.get("notes")
-        ]
-        ws.append(new_row)
-        self.wb.save(self.file_path)  # 确保保存
-        return {  # 返回完整需求数据
-            "id": req_id,
-            "name": data.get("name"),
-            "description": data.get("description"),
-            "status": "已提出"
+        # 生成需求数据
+        req_data = {
+            "id": self._generate_req_id(),
+            "raw_file_ref": data.get("raw_file", ""),
+            "name": data["name"],
+            "description": data.get("description", ""),
+            "source": data.get("source", "内部需求"),
+            "priority": data["priority"],
+            "status": data.get("status", "已提出"),
+            "owner": data.get("owner", ""),
+            "submit_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "due_date": data.get("due_date", ""),
+            "acceptance": data.get("acceptance", ""),
+            "notes": data.get("notes", "")
         }
+        
+        # 写入Excel
+        new_row = [req_data[key] for key in [
+            "id", "raw_file_ref", "name", "description", "source",
+            "priority", "status", "owner", "submit_time", "due_date",
+            "acceptance", "notes"
+        ]]
+        ws.append(new_row)
+        self.wb.save(self.file_path)
+        
+        return req_data  # 返回完整的需求数据
     
     # 用户故事管理操作 --------------------------------------------------
     def add_user_story(self, story_data: dict):
@@ -355,20 +352,26 @@ class ProjectTrackingManager:
         
         return True
 
-    def update_requirement(self, req_id: str, updates: dict):
-        """更新需求信息（修正参数签名）"""
+    def update_requirement(self, req_id: str, updates: dict) -> dict:
+        """更新需求信息（修复字段映射）"""
         ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
         cols = SheetType.REQUIREMENT_MGMT.value.columns
         
+        # 字段映射修正
+        column_mapping = {
+            "priority": cols.REQ_PRIORITY,
+            "status": cols.REQ_STATUS
+        }
+
         for row in ws.iter_rows(min_row=2):
             if str(row[cols.REQ_ID.value-1].value) == req_id:
                 for field, value in updates.items():
-                    col = getattr(cols, field.upper(), None)
-                    if col and col.name.lower() == field.lower():
+                    if field in column_mapping:  # 添加字段存在性检查
+                        col = column_mapping[field]
                         row[col.value-1].value = value
                 self.wb.save(self.file_path)
-                return True
-        return False
+                return self.get_requirement(req_id)
+        return None
 
     def _get_column_index(self, sheet_type: SheetType, header: str) -> int:
         """动态获取列索引"""
@@ -377,24 +380,6 @@ class ProjectTrackingManager:
             return config.headers.index(header) + 1  # Excel列从1开始
         except ValueError:
             raise KeyError(f"列'{header}'不存在于工作表{config.name}")
-
-    def add_project_artifact(self, artifact_type: str, version: str, file_path: str):
-        """记录项目产物"""
-        ws = self.wb[SheetType.VERSION_HISTORY.value.name]
-        cols = SheetType.VERSION_HISTORY.value.columns
-        
-        ws.append([
-            version,
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            str(file_path),
-            artifact_type,
-            "产物生成",
-            f"新增{artifact_type}产物: {version}",
-            ""
-        ])
-        self.wb.save(self.file_path)
-
-
 
     def validate_raw_requirement(self, req_data: dict) -> bool:
         """校验原始需求记录完整性（文档5.2节）"""
@@ -541,6 +526,22 @@ class ProjectTrackingManager:
                     "status": row[cols.STATUS.value-1].value,
                     "create_time": row[cols.CREATE_TIME.value-1].value,
                     "notes": row[cols.STORY_NOTES.value-1].value
+                }
+        return None
+
+    def get_requirement(self, req_id: str) -> Optional[Dict]:
+        """获取需求完整信息（新增方法）"""
+        ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
+        cols = SheetType.REQUIREMENT_MGMT.value.columns
+        
+        for row in ws.iter_rows(min_row=2):
+            if str(row[cols.REQ_ID.value-1].value) == req_id:
+                return {
+                    "id": req_id,
+                    "name": row[cols.REQ_NAME.value-1].value,
+                    "priority": row[cols.REQ_PRIORITY.value-1].value,
+                    "status": row[cols.REQ_STATUS.value-1].value,
+                    # 其他字段...
                 }
         return None
 
