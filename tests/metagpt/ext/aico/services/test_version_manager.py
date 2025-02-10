@@ -1,5 +1,4 @@
 # 测试 @metagpt/ext/aico/services/version_manager.py
-## version_manager代码目标覆盖率：80%以上
 ## 测试的目录和数据放在 @tests/data/aico/services/version_manager
 ## 测试要求：
 ### 模拟外部调用的场景，测试完整的版本管理流程workflow，可以调用到所有的函数 

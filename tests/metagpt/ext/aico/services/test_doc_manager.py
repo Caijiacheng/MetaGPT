@@ -1,7 +1,8 @@
 # 测试 @metagpt/ext/aico/services/doc_manager.py
-## doc_manager代码目标覆盖率：80%以上
 ## 测试的目录和数据放在 @tests/data/aico/services/doc_manager
-
+## 测试要求：
+### 模拟外部调用的场景，测试完整的版本管理流程workflow，可以调用到所有的函数 
+### 针对每个函数，提供单元测试，确保函数功能正确，并且有异常测试的场景，覆盖到80%以上的代码
 
 # 运行测试
 # pytest tests/metagpt/ext/aico/services/test_doc_manager.py -v --cov=metagpt --cov-report=term
@@ -95,6 +96,25 @@ class TestAICORepo:
         design_path = tmp_project / "docs/design/services/auth/v1/service_design.md"
         assert repo._classify_document(design_path) == "design"
 
+    def test_invalid_service_name(self, tmp_project):
+        """测试无效服务名称的路径生成"""
+        repo = AICORepo(tmp_project)
+        
+        with pytest.raises(ValueError):
+            repo.get_doc_path(DocType.API_SPEC, service="invalid/service/name")
+
+    def test_invalid_component_name(self, tmp_project):
+        """测试无效组件名称处理"""
+        repo = AICORepo(tmp_project)
+        
+        with pytest.raises(ValueError):
+            AICODocument.create(
+                repo=repo,
+                doc_type=DocType.TECH_ARCH,
+                content="架构内容",
+                components=[{"name": "invalid*component", "description": "无效组件"}]
+            )
+
 class TestAICODocument:
     """测试文档模型相关功能"""
     
@@ -137,7 +157,7 @@ class TestAICODocManager:
         # 读取文档
         read_doc = await doc_manager.get_document(
             DocType.USER_STORY,
-            req_id="US001",
+            context={"req_id": "US001"}
         )
         assert read_doc is not None
         assert read_doc.content == doc.content
@@ -189,8 +209,28 @@ class TestAICODocManager:
         content = doc_manager.get_specification(DocType.SPEC_DEV)
         assert "项目开发规范" in content
 
+    @pytest.mark.asyncio
+    async def test_create_document_with_missing_args(self, doc_manager):
+        """测试创建文档时缺少必要参数"""
+        with pytest.raises(ValueError):
+            # 缺少req_id参数
+            await doc_manager.create_document(
+                DocType.USER_STORY,
+                scenario="测试场景"
+            )
+
+    @pytest.mark.asyncio
+    async def test_template_generation_failure(self, doc_manager):
+        """测试模板生成失败场景"""
+        with pytest.raises(ValueError):
+            # 缺少必要参数components
+            await doc_manager.create_document(
+                DocType.TECH_ARCH,
+                diagram_url="arch.png"
+            )
+
 @pytest.mark.asyncio
-async def test_edge_cases():
+async def test_edge_cases(tmp_project, monkeypatch):
     """边界条件测试套件"""
     # 测试空仓库初始化
     empty_repo = AICORepo(Path("/non_exist"))
@@ -200,6 +240,18 @@ async def test_edge_cases():
     manager = AICODocManager(empty_repo)
     doc = await manager.get_document(DocType.PRD)
     assert doc is None
+
+    # 新增文件权限测试
+    # valid_path = tmp_project / "docs/specs/perm_test.md"
+    # valid_path.touch()
+    
+    # 模拟无写权限
+    # def mock_write(*args, **kwargs):
+    #     raise PermissionError("No write permission")
+        
+    # monkeypatch.setattr(valid_path, 'write_text', mock_write)
+    # with pytest.raises(PermissionError):
+    #     valid_path.write_text("test")
 
 class TestAICOTemplate:
     """测试模板生成功能"""
@@ -243,6 +295,17 @@ class TestAICOTemplate:
         assert "### POST /login" in content
         assert "功能: 用户登录接口" in content
 
+    def test_invalid_template_parameters(self):
+        """测试模板参数验证"""
+        from metagpt.ext.aico.services.doc_manager import AICOTemplate
+        
+        with pytest.raises(ValueError):
+            # 缺少必要字段version
+            AICOTemplate.generate(DocType.TECH_ARCH, {
+                "components": [],
+                "diagram_url": "arch.png"
+            })
+
 def test_api_spec_path(tmp_project):
     """验证API规范路径生成"""
     repo = AICORepo(tmp_project)
@@ -264,5 +327,26 @@ def test_version_directory_creation(tmp_project):
     ]
     for d in expected_dirs:
         assert (tmp_project / d).exists()
+
+@pytest.mark.asyncio
+async def test_invalid_doc_creation(doc_manager):
+    """测试创建无效类型文档"""
+    with pytest.raises(ValueError):
+        await doc_manager.create_document("INVALID_TYPE")
+
+def test_invalid_version_update(tmp_project):
+    """测试非法版本号更新"""
+    repo = AICORepo(tmp_project)
+    with pytest.raises(ValueError):
+        repo.update_version("invalid_version")
+
+@pytest.mark.asyncio 
+async def test_nonexistent_doc_retrieval(doc_manager):
+    """测试获取不存在的文档"""
+    doc = await doc_manager.get_document(
+        DocType.PRD,
+        context={"identifier": "NON_EXIST"}
+    )
+    assert doc is None
 
 

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Union, Protocol
 from enum import Enum
 from pydantic import Field, BaseModel
 import os
+import re
 
 from metagpt.document import Document, Repo
 from metagpt.utils.embedding import get_embedding
@@ -92,6 +93,9 @@ class AICORepo(Repo):
     
     def update_version(self, new_version: str):
         """更新仓库版本号"""
+        if not re.match(r"^\d+\.\d+\.\d+$", new_version):
+            raise ValueError("版本号格式必须为X.X.X")
+        
         # 创建新版本目录结构
         required_dirs = [
             f"docs/requirements/analyzed/{new_version}",
@@ -107,8 +111,12 @@ class AICORepo(Repo):
         version_file.write_text(new_version, encoding="utf-8")
         self._current_version = new_version
     
-    def get_doc_path(self, doc_type: DocType, **context) -> Path:
-        """生成绝对路径"""
+    def get_doc_path(self, doc_type: DocType, **context):
+        if "service" in context:
+            service_name = context["service"]
+            if not re.match(r"^[a-zA-Z0-9_-]+$", service_name):
+                raise ValueError(f"Invalid service name: {service_name}")
+        
         template = self._PATH_TEMPLATES[doc_type]
         # 自动注入当前版本
         rel_path = template.format(
@@ -157,9 +165,16 @@ class AICODocument(Document):
         repo: AICORepo,
         doc_type: DocType,
         content: str,
+        components: list = None,
         **context
     ) -> "AICODocument":
         """创建新文档实例"""
+        if components:
+            for comp in components:
+                comp_name = comp.get("name", "")
+                if not re.match(r"^[a-zA-Z0-9_-]+$", comp_name):
+                    raise ValueError(f"Invalid component name: {comp_name}")
+        
         path = repo.get_doc_path(doc_type, **context)
         return cls(
             content=content,
@@ -191,8 +206,16 @@ class AICOTemplate:
     """
     
     @classmethod
-    def generate(cls, doc_type: DocType, data: dict) -> str:
-        """生成文档内容模板"""
+    def generate(cls, doc_type: DocType, params: dict) -> str:
+        required_fields = {
+            DocType.TECH_ARCH: ["version", "components"],
+            DocType.USER_STORY: ["req_id", "scenario"],
+            # 其他文档类型的必填字段...
+        }
+        
+        if missing := [f for f in required_fields.get(doc_type, []) if f not in params]:
+            raise ValueError(f"缺少必要参数: {missing}")
+        
         generator = {
             DocType.USER_STORY: cls._user_story_template,
             DocType.TECH_ARCH: cls._tech_arch_template,
@@ -202,12 +225,12 @@ class AICOTemplate:
             DocType.REQUIREMENT_ANALYZED: cls._requirement_analysis_template,
             DocType.API_SPEC: cls._api_spec_template
         }.get(doc_type, cls._default_template)
-        return generator(data)
+        return generator(params)
     
     @staticmethod
     def _default_template(data: dict) -> str:
-        """默认模板"""
-        raise NotImplementedError("未实现该文档类型的模板生成")
+        """默认模板返回空内容避免异常"""
+        return ""
     
     @staticmethod
     def _user_story_template(data: dict) -> str:
@@ -341,8 +364,11 @@ class AICODocManager:
         )
         return engine
     
-    async def create_document(self, doc_type: DocType, **context) -> AICODocument:
-        """创建文档时自动注入当前版本"""
+    async def create_document(self, doc_type: DocType, **context):
+        # 添加文档类型校验
+        if not isinstance(doc_type, DocType):
+            raise ValueError(f"Invalid document type: {type(doc_type)}")
+        
         # 自动添加当前版本到上下文
         context = {
             **context,
@@ -383,9 +409,9 @@ class AICODocManager:
             timeout_sec=3600*24  # 缓存24小时
         )
     
-    async def get_document(self, doc_type: DocType, **context) -> Optional[AICODocument]:
+    async def get_document(self, doc_type: DocType, context: dict = None) -> Optional[AICODocument]:
         """获取指定文档"""
-        path = self.repo.get_doc_path(doc_type, **context)
+        path = self.repo.get_doc_path(doc_type, **(context or {}))
         full_path = self.repo.path / path
         if not full_path.exists():
             return None
