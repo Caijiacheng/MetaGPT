@@ -24,12 +24,13 @@ class AICOVersionManager:
         version_file.write_text(initial_version + "\n")
         return initial_version
     
-    @staticmethod
-    def validate_version(version: str):
-        """校验版本号格式"""
-        parts = version.split('.')
-        if len(parts) != 3 or not all(p.isdigit() for p in parts):
-            raise ValueError(f"非法版本号格式: {version}")
+    @classmethod
+    def from_version(cls, version: str):
+        return cls(version)
+
+    def validate_version(self, input_version: str):
+        if input_version != self.current_version:
+            raise ValueError(f"版本记录{input_version}与系统版本{self.current_version}不一致")
     
     def generate_first_release(self) -> str:
         """生成首个正式版本（从0.1.0→1.0.0）"""
