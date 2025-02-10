@@ -7,12 +7,11 @@
 @Modified By: Jiacheng Cai, 2023/12/15
     TODO: 后续补充测试计划、测试用例设计、自动化测试规范等详细要求
 """
-from typing import Dict
-from .base_role import AICOBaseRole
+from metagpt.roles import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.qa_action import WriteTestCase, ExecuteTest, ReportBug
 
-class AICOQaEngineer(AICOBaseRole):
+class AICOQaEngineer(Role):
     """测试工程师角色,负责测试用例设计和执行"""
     
     name: str = "Quincy"

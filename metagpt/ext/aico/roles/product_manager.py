@@ -8,14 +8,12 @@
 说明:
   产品经理角色负责生成PRD文档、修订PRD及设计产品，所有文档均按照 JSON 格式产出。
 """
-from typing import Dict
-from metagpt.roles.role import Role, RoleReactMode
+from metagpt.roles.role import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
-from metagpt.actions import UserRequirement, PrepareDocuments
 from ..actions.pdm_action import WritePRD, RevisePRD, AnalyzeRequirement, DesignProduct
-from .base_role import AICOBaseRole
+from metagpt.roles import Role
 
-class AICOProductManager(AICOBaseRole):
+class AICOProductManager(Role):
     """产品经理角色"""
     
     name: str = "Alice"

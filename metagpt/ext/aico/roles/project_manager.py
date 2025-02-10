@@ -13,8 +13,7 @@ from ..actions.pm_action import (
     ReviewRequirement, ReviewDesign, ReviewAllRequirements
 )
 import logging
-from metagpt.ext.aico.config import config
-import shutil
+
 from ..services.project_tracking_manager import ProjectTrackingManager
 from ..services.version_manager import AICOVersionManager
 from ..services.version_manager import get_current_version

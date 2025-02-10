@@ -12,9 +12,9 @@
   3. 调用AI引擎更新业务架构和用户故事
   4. 发布分析结果到环境中
 """
-import json
+
 from typing import Dict
-from .base_role import AICOBaseRole
+from metagpt.roles import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ba_action import ParseBizRequirement, Update4ABusiness
 from pathlib import Path
@@ -24,7 +24,7 @@ from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
 
 logger = logging.getLogger(__name__)
 
-class AICOBusinessAnalyst(AICOBaseRole):
+class AICOBusinessAnalyst(Role):
     """遵循AICO规范的业务分析师角色"""
     
     name: str = "AICO_BA"

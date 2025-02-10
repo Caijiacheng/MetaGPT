@@ -8,15 +8,15 @@
 说明:
   开发工程师调用 PrepareEnv、DesignTechSolution、WriteCode、CodeReview、DebugCode、WriteUnitTest 动作，确保所有产出符合新版代码规范。
 """
-from typing import Dict, List
-from .base_role import AICOBaseRole
+
+from metagpt.roles import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.dev_action import (
     PrepareEnv, DesignTechSolution, BreakdownTask,
     WriteCode, CodeReview, DebugCode, WriteUnitTest
 )
 
-class AICODeveloper(AICOBaseRole):
+class AICODeveloper(Role):
     """开发工程师角色"""
     
     name: str = "David"

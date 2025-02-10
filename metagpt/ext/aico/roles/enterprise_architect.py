@@ -12,9 +12,8 @@
   3. 调用AI引擎更新4A架构(应用架构、数据架构、技术架构)
   4. 发布分析结果到环境中
 """
-from typing import Dict
-import json
-from .base_role import AICOBaseRole
+
+from metagpt.roles import Role
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from ..actions.ea_action import ParseTechRequirements, Update4ATech
 from openpyxl import load_workbook
@@ -25,7 +24,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-class AICOEnterpriseArchitect(AICOBaseRole):
+class AICOEnterpriseArchitect(Role):
     """遵循AICO规范的企业架构师角色"""
     
     name: str = "AICO_EA"
