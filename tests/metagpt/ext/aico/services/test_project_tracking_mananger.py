@@ -27,15 +27,12 @@ def test_excel_path(tmp_path):
     return tmp_path / "test_project_tracking.xlsx"
 
 @pytest.fixture
-def tracking_manager(test_excel_path, tmp_path):
-    # 创建临时项目根目录
-    project_root = tmp_path / "project_root"
-    project_root.mkdir()
-    
+def tracking_manager(test_excel_path):
+
     # 确保每次测试使用新文件
     if test_excel_path.exists():
         test_excel_path.unlink()
-    return ProjectTrackingManager(test_excel_path, project_root)
+    return ProjectTrackingManager.from_path(test_excel_path)
 
 class TestProjectTrackingManagerInit:
     def test_file_creation(self, test_excel_path, tracking_manager):

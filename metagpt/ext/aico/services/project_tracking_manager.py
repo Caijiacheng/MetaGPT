@@ -11,7 +11,6 @@ from functools import wraps
 import threading
 
 from metagpt.ext.aico.config.tracking_config import SheetType, IDConfig
-from metagpt.ext.aico.services.version_manager import AICOVersionManager, get_current_version
 
 
 logger = logging.getLogger(__name__)
@@ -43,9 +42,13 @@ def validate_id_format(pattern: str):
 class ProjectTrackingManager:
     """项目跟踪服务（Excel实现）"""
     
-    def __init__(self, file_path: Path, project_root: Path):
+    @classmethod
+    def from_path(cls, path: Path, **kwargs):
+        """替代构造函数：从路径初始化"""
+        return cls(path, **kwargs)
+    def __init__(self, file_path: Path):
         self.file_path = Path(file_path) if isinstance(file_path, str) else file_path
-        self.project_root = Path(project_root) if isinstance(project_root, str) else project_root
+
         self.wb = self._init_workbook()
         self._validate_column_index(SheetType.RAW_REQUIREMENT.value.columns)
         self._validate_column_index(SheetType.REQUIREMENT_MGMT.value.columns)
@@ -503,12 +506,6 @@ class ProjectTrackingManager:
                 counters[us_id] = max(counters[us_id], seq)
         return counters
     
-    def save_counters(self):
-        """持久化序列号（示例实现）"""
-        # TODO: 实现Redis存储
-        with open(self.project_root / ".counters", "w") as f:
-            f.write(f"req_counter={self.requirement_counter}\n")
-            # 存储其他计数器...
 
     def get_user_story(self, story_id: str) -> Optional[Dict]:
         """获取用户故事完整信息"""
