@@ -130,20 +130,20 @@ class ReviewChanges(Action):
     async def run(self, change_log: Dict) -> Dict:
         raise NotImplementedError("变更复核功能待实现")
 
-class ReviewDesign(Action):
-    """设计文档复核（文档6.2节）"""
+# class ReviewDesign(Action):
+    # """设计文档复核（文档6.2节）"""
     
-    async def run(self, design_doc: str) -> ActionOutput:
-        """执行设计文档复核"""
-        # 实现设计文档的自动校验逻辑
-        # 示例：检查是否符合架构规范
-        spec = self.role.get_spec("ea_design")
-        result = await self._aico_validate(design_doc, spec)
+    # async def run(self, design_doc: str) -> ActionOutput:
+    #     """执行设计文档复核"""
+    #     # 实现设计文档的自动校验逻辑
+    #     # 示例：检查是否符合架构规范
+    #     spec = self.role.get_spec("ea_design")
+    #     result = await self._aico_validate(design_doc, spec)
         
-        return ActionOutput(
-            content=result,
-            instruct_content={
-                "approval": result["is_valid"],
-                "comments": result["errors"]
-            }
-        ) 
+    #     return ActionOutput(
+    #         content=result,
+    #         instruct_content={
+    #             "approval": result["is_valid"],
+    #             "comments": result["errors"]
+    #         }
+    #     ) 

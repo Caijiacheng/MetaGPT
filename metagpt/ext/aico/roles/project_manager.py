@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 from metagpt.roles import Role
 from ..actions.pm_action import (
-    ReviewRequirement, ReviewDesign, ReviewAllRequirements
+     ReviewAllRequirements, ReviewAllDesigns, ReviewAllTasks
 )
 import logging
 
@@ -18,7 +18,7 @@ from ..services.project_tracking_manager import ProjectTrackingManager
 from ..services.version_manager import AICOVersionManager
 from ..services.version_manager import get_current_version
 from metagpt.environment.aico.aico_env import AICOEnvironment
-from metagpt.ext.aico.services.doc_manager import DocManagerService, DocType
+from metagpt.ext.aico.services.doc_manager import AICODocManager,DocType
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +32,21 @@ class AICOProjectManager(Role):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.set_actions([ReviewRequirement, ReviewDesign, ReviewAllRequirements])  # 只保留需要LLM交互的Action
+        self.set_actions([ReviewAllRequirements, ReviewAllDesigns, ReviewAllTasks])  # 只保留需要LLM交互的Action
         self.version_svc = AICOVersionManager(self.project_root)  # 注入项目根目录
         self.baseline_versions = [self.version_svc.current]
         self.current_baseline_version = self.version_svc.current
-        self.doc_manager = DocManagerService(self.project_root)
+        self.doc_manager = AICODocManager(self.project_root)
         
     def _init_project(self):
-        """使用DocManagerService管理目录结构"""
+        """使用AICODocManager管理目录结构"""
         if self.project_root.exists():
             logger.info(f"加载现有项目: {self.project_root}")
             self._validate_project_structure()
             self._sync_specs()
             return
 
-        # 创建新项目结构（通过DocManagerService）
+        # 创建新项目结构（通过AICODocManager）
         logger.info(f"初始化新项目结构: {self.project_root}")
         
         # 确保基础目录存在
@@ -80,7 +80,7 @@ class AICOProjectManager(Role):
         
         missing_dirs = []
         for doc_type in required_doc_types:
-            # 通过DocManagerService获取标准路径（不带版本号）
+            # 通过AICODocManager获取标准路径（不带版本号）
             expected_path = self.doc_manager.get_doc_path(
                 doc_type=doc_type,
                 version="",  # 基础目录不需要版本号
@@ -99,7 +99,7 @@ class AICOProjectManager(Role):
 
 
     def _create_tracking_file(self):
-        """通过DocManagerService获取跟踪表路径"""
+        """通过AICODocManager获取跟踪表路径"""
         tracking_path = self.doc_manager.get_doc_path(
             DocType.PROJECT_TRACKING,
             version=""
@@ -137,12 +137,14 @@ class AICOProjectManager(Role):
         self.current_baseline_version = new_version
         
         # 发布业务需求分析
-        await self.publish(AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS.name, {
-            "req_id": self._get_raw_requirements()["req_id"],
-            "file_path": self._get_raw_requirements()["file_path"],
-            "type": "business",
-            "version": new_version
-        })
+        await self.publish_message(
+            AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS.with_content(
+                req_id=self._get_raw_requirements()["req_id"],
+                file_path=self._get_raw_requirements()["file_path"],
+                type="business",
+                version=new_version
+            )
+        )
         
         # 等待BA分析完成
         analysis_done = await self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name)
@@ -215,15 +217,19 @@ class AICOProjectManager(Role):
 
     async def _process_arch_analysis(self):
         """架构分析流程"""
-        await self.publish(AICOEnvironment.MSG_BUSINESS_ARCH.name, {
-            "version": self.current_baseline_version,
-            "biz_requirements": self._get_parsed_biz_reqs()
-        })
+        await self.publish_message(
+            AICOEnvironment.MSG_BUSINESS_ARCH.with_content(
+                version=self.current_baseline_version,
+                biz_requirements=self._get_parsed_biz_reqs()
+            )
+        )
         
-        await self.publish(AICOEnvironment.MSG_TECH_ARCH.name, {
-            "version": self.current_baseline_version,
-            "tech_requirements": self._get_parsed_tech_reqs()
-        })
+        await self.publish_message(
+            AICOEnvironment.MSG_TECH_ARCH.with_content(
+                version=self.current_baseline_version,
+                tech_requirements=self._get_parsed_tech_reqs()
+            )
+        )
         
         # 等待架构分析完成
         await self._wait_for_arch_analysis_complete()
@@ -239,11 +245,13 @@ class AICOProjectManager(Role):
         ))
         
         # 等待人工确认（新增）
-        await self.publish("project:req_review_ready", {
-            "version": self.current_baseline_version,
-            "ai_review": review_result.instruct_content,
-            "requirements": self._get_all_parsed_requirements()
-        })
+        await self.publish_message(
+            AICOEnvironment.MSG_PRD.with_content(
+                version=self.current_baseline_version,
+                ai_review=review_result.instruct_content,
+                requirements=self._get_all_parsed_requirements()
+            )
+        )
         
         # 监听人工确认结果（新增）
         confirm_msg = await self.observe("project:req_review_confirmed", timeout=3600)
@@ -263,25 +271,29 @@ class AICOProjectManager(Role):
         )
         
         # 发布基线确认事件（携带审核信息）
-        await self.publish("project:req_baseline_confirmed", {
-            "version": self.current_baseline_version,
-            "approved_reqs": confirm_msg.content["approved_reqs"],
-            "review_details": confirm_msg.content
-        })
+        await self.publish_message(
+            AICOEnvironment.MSG_PRD_REVISED.with_content(
+                version=self.current_baseline_version,
+                approved_reqs=confirm_msg.content["approved_reqs"],
+                review_comments=confirm_msg.content.get("review_comments", {})
+            )
+        )
 
     async def _process_design(self):
         """处理设计阶段"""
         design_msg = await self.observe("design_doc")
         if design_msg:
             review_result = await self.rc.run(
-                ReviewDesign().run(design_msg.content)
+                ReviewAllDesigns().run(design_msg.content)
             )
             
             # 发布设计基线（根据文档6.2节）
-            await self.publish("design:baseline", {
-                "prd": design_msg.content,
-                "review": review_result.instruct_content
-            })
+            await self.publish_message(
+                AICOEnvironment.MSG_PRD.with_content(
+                    version=self.current_baseline_version,
+                    ai_review=review_result.instruct_content
+                )
+            )
 
     async def _process_implementation(self):
         """处理实现跟踪（根据文档6.3节）"""
@@ -375,7 +387,7 @@ class AICOProjectManager(Role):
         return "patch"
 
     def _create_version_dirs(self, version: str):
-        """使用DocManagerService创建版本目录"""
+        """使用AICODocManager创建版本目录"""
         doc_types = [
             DocType.REQUIREMENT_ANALYZED,
             DocType.BUSINESS_ARCH,

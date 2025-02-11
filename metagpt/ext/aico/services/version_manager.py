@@ -1,5 +1,6 @@
 from pathlib import Path
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -7,24 +8,39 @@ class AICOVersionManager:
     """语义化版本管理服务（增强初始化逻辑）"""
     
     def __init__(self, project_root: Path):
+        """
+        初始化版本管理服务，如果 project_root 不存在，则不进行版本文件操作，
+        直接设置默认版本；如果存在，则加载或初始化 VERSION 文件。
+        """
         self.project_root = project_root
-        # 先加载版本号再赋值给current_version
-        version = self._load_or_init_version()
-        self.current_version = version  # 确保在validate前完成赋值
+        if self.project_root.exists():
+            self.current_version = self._load_or_init_version()
+        else:
+            # 新项目未创建目录时，先设置一个默认版本，后续由项目初始化流程统一创建目录
+            self.current_version = "0.1.0"
         
-    def _load_or_init_version(self) -> str:
-        """加载或初始化版本号"""
+    @property
+    def current(self) -> str:
+        """
+        增加只读属性 current，返回 current_version 用于向后兼容，
+        避免在项目经理中调用 self.version_svc.current 时出错。
+        """
+        return self.current_version
+
+    def _load_or_init_version(self):
+        """
+        尝试加载 VERSION 文件；如果不存在，则初始化文件并写入默认版本
+        """
         version_file = self.project_root / "VERSION"
-        
+        initial_version = "0.1.0"
+        # 确保目录存在
+        version_file.parent.mkdir(parents=True, exist_ok=True)
         if version_file.exists():
             version = version_file.read_text().strip()
-            self.validate_version(version)
-            return version
-            
-        # 新项目初始化逻辑
-        initial_version = "0.1.0"
-        version_file.write_text(initial_version + "\n")
-        return initial_version
+            return version if version else initial_version
+        else:
+            version_file.write_text(initial_version + "\n")
+            return initial_version
     
     @classmethod
     def from_version(cls, version: str):
@@ -50,24 +66,23 @@ class AICOVersionManager:
         return self.current_version
     
     def bump(self, change_type: str) -> str:
-        """生成新版本并更新文件"""
-        major, minor, patch = map(int, self.current_version.split('.'))
-        
+        """
+        根据 change_type（major/minor/patch），计算并更新版本号（示例实现）
+        """
+        old_version = self.current_version.split(".")
         if change_type == "major":
-            major += 1
-            minor = 0
-            patch = 0
+            new_version = f"{int(old_version[0]) + 1}.0.0"
         elif change_type == "minor":
-            minor += 1
-            patch = 0
+            new_version = f"{old_version[0]}.{int(old_version[1]) + 1}.0"
         elif change_type == "patch":
-            patch += 1
+            new_version = f"{old_version[0]}.{old_version[1]}.{int(old_version[2]) + 1}"
         else:
-            raise ValueError(f"无效变更类型: {change_type}")
-            
-        new_version = f"{major}.{minor}.{patch}"
+            raise ValueError("无效变更类型: " + change_type)
+        # 更新版本文件（保证目录存在）
+        version_file = self.project_root / "VERSION"
+        version_file.parent.mkdir(parents=True, exist_ok=True)
+        version_file.write_text(new_version + "\n")
         self.current_version = new_version
-        self._update_version_file()
         return new_version
     
     def _update_version_file(self):
