@@ -1,6 +1,7 @@
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, List, Optional, Union, Protocol
+import shutil
+from typing import ClassVar, Dict, List, Optional, Union, Protocol
 from enum import Enum
 from pydantic import Field, BaseModel
 import os
@@ -30,17 +31,20 @@ class DocType(str, Enum):
     SPEC_PRD = "spec_prd"
     SPEC_DEV = "spec_dev"
     SPEC_QA = "spec_qa"
+    SPEC_API = "spec_api"
     REQUIREMENT_RAW = "requirement_raw"
+    TECH_REQUIREMENT = "tech_requirement"
+    BIZ_REQUIREMENT = "biz_requirement"
     BUSINESS_ARCH = "business_arch"
-    REQUIREMENT_ANALYZED = "requirement_analyzed"
     USER_STORY = "user_story"
     TECH_ARCH = "tech_arch"
-    TECH_REQUIREMENT = "tech_requirement"
     PRD = "prd"
     SERVICE_DESIGN = "service_design"
-    API_SPEC = "api_spec"
-    TEST_CASE = "test_case"
-    TEST_REPORT = "test_report"
+    API_DESIGN = "api_design"   
+    TEST_CASE_DESIGN = "test_case_design"
+    RELEASE_NOTE = "release_note"
+    
+
 
 class AICORepo(Repo):
     """
@@ -53,32 +57,80 @@ class AICORepo(Repo):
     - 确保物理目录结构完整性
     """
     
+    _PATH_SPECS = "docs/specs"
+    _PATH_REQUIREMENTS = "docs/requirements"
+    _PATH_REQ_RAW = "docs/requirements/raw"
+    _PATH_REQ_ANALYZED = "docs/requirements/analyzed"
+    _PATH_EA_ARCH = "docs/ea"
+    _PATH_DESIGN_PRD = "docs/design/prd"
+    _PATH_DESIGN_SERVICES = "docs/design/services"
+    _PATH_RELEASES = "releases"
+
+    _PATH_SPECS_FILES = [
+        _PATH_SPECS + "/pm_guide.md",
+        _PATH_SPECS + "/ba_guide.md",
+        _PATH_SPECS + "/ea_guide.md",
+        _PATH_SPECS + "/prd_guide.md",
+        _PATH_SPECS + "/dev_guide.md",
+        _PATH_SPECS + "/qa_guide.md",
+        _PATH_SPECS + "/api_guide.md",
+    ]
+
+
     _PATH_TEMPLATES = {
-        DocType.PROJECT_TRACKING: "tracking/project_tracking.xlsx",
+        DocType.PROJECT_TRACKING: "project_tracking.xlsx",
         DocType.VERSION_PLAN: "VERSION",
-        DocType.SPEC_PM: "docs/specs/pm_guide.md",
-        DocType.SPEC_BA: "docs/specs/ba_guide.md",
-        DocType.SPEC_EA: "docs/specs/ea_guide.md",
-        DocType.SPEC_PRD: "docs/specs/prd_guide.md",
-        DocType.SPEC_DEV: "docs/specs/dev_guide.md",
-        DocType.SPEC_QA: "docs/specs/qa_guide.md",
-        DocType.REQUIREMENT_RAW: "docs/requirements/raw/{req_id}.md",
-        DocType.BUSINESS_ARCH: "docs/ea/biz_arch/{version}/biz_arch.md",
-        DocType.REQUIREMENT_ANALYZED: "docs/requirements/analyzed/{version}/req-{req_id}/analysis.md",
-        DocType.USER_STORY: "docs/requirements/analyzed/{version}/user_stories.md",
-        DocType.TECH_ARCH: "docs/ea/tech_arch/{version}/tech_arch.md",
-        DocType.TECH_REQUIREMENT: "docs/requirements/analyzed/{version}/req-{req_id}/tech_analysis.md",
-        DocType.PRD: "docs/design/prd/{version}/prd.md",
-        DocType.SERVICE_DESIGN: "docs/design/services/{service}/{version}/service_design.md",
-        DocType.API_SPEC: "docs/api/{version}/spec.md",
-        DocType.TEST_CASE: "docs/design/tests/{service}/{version}/test_cases.md",
-        DocType.TEST_REPORT: "releases/{version}/qa_report.md"
+        DocType.SPEC_PM: _PATH_SPECS + "/pm_guide.md",
+        DocType.SPEC_BA: _PATH_SPECS + "/ba_guide.md",
+        DocType.SPEC_EA: _PATH_SPECS + "/ea_guide.md",
+        DocType.SPEC_PRD: _PATH_SPECS + "/prd_guide.md",
+        DocType.SPEC_DEV: _PATH_SPECS + "/dev_guide.md",
+        DocType.SPEC_QA: _PATH_SPECS + "/qa_guide.md",
+        DocType.SPEC_API: _PATH_SPECS + "/api_guide.md",
+        DocType.REQUIREMENT_RAW: _PATH_REQ_RAW + "/{version}/{req_id}.md",
+        DocType.TECH_REQUIREMENT: _PATH_REQ_ANALYZED + "/{version}/{req_id}/tech_analysis.md",
+        DocType.BIZ_REQUIREMENT: _PATH_REQ_ANALYZED + "/{version}/{req_id}/biz_analysis.md",
+        DocType.BUSINESS_ARCH: _PATH_EA_ARCH + "/{version}/biz_arch.md",
+        DocType.USER_STORY: _PATH_EA_ARCH + "/{version}/user_stories.md",
+        DocType.TECH_ARCH: _PATH_EA_ARCH + "/{version}/tech_arch.md",
+        DocType.PRD: _PATH_DESIGN_PRD + "/{version}/prd.md",
+        DocType.SERVICE_DESIGN: _PATH_DESIGN_SERVICES + "/{service}/{version}/service_design.md",
+        DocType.API_DESIGN: _PATH_DESIGN_SERVICES + "/{service}/{version}/api_design.md",
+        DocType.TEST_CASE_DESIGN: _PATH_DESIGN_SERVICES + "/{service}/{version}/test_cases.md",
+        DocType.RELEASE_NOTE: _PATH_RELEASES + "/{version}/release_note.md"
     }
     
+    _INVAID_VERSION_: ClassVar[str] = "0.0.0"
+
     def __init__(self, path: Path):
         super().__init__(path=path)
         self._current_version = self._read_version()
-    
+        if self._current_version == self._INVAID_VERSION_:
+            raise ValueError("项目未初始化")
+
+    @classmethod
+    def init_project(cls, path: Path, specs: List[Path], version: str = "1.0.0", **kwargs):
+        """替代构造函数：从路径初始化"""
+        if path.exists():
+            raise FileExistsError(f"项目路径已存在: {path}")
+        
+        # 初始化所有目录文件
+        for path in cls._PATH_DIRS:
+            (path).mkdir(parents=True, exist_ok=True)
+            pass
+
+        # copy所有规范文件
+        for spec in specs:
+            shutil.copy(spec, cls._PATH_SPECS +"/" + spec.name)
+            cls.ensure_specs_exist()
+            pass
+            
+        # 更新版本文件
+        version_file = path / "VERSION"
+        version_file.write_text(version, encoding="utf-8")
+
+        return cls(path, **kwargs)
+
     @property
     def current_version(self) -> str:
         """获取当前语义化版本号"""
@@ -89,22 +141,13 @@ class AICORepo(Repo):
         version_file = self.path / "VERSION"
         if version_file.exists():
             return version_file.read_text(encoding="utf-8").strip()
-        return "0.0.0"
+        return self._INVAID_VERSION_
+    
     
     def update_version(self, new_version: str):
         """更新仓库版本号"""
         if not re.match(r"^\d+\.\d+\.\d+$", new_version):
             raise ValueError("版本号格式必须为X.X.X")
-        
-        # 创建新版本目录结构
-        required_dirs = [
-            f"docs/requirements/analyzed/{new_version}",
-            f"docs/ea/tech_arch/{new_version}",
-            f"docs/api/{new_version}",
-            f"releases/{new_version}"
-        ]
-        for d in required_dirs:
-            (self.path / d).mkdir(parents=True, exist_ok=True)
         
         # 更新版本文件
         version_file = self.path / "VERSION"
@@ -112,12 +155,12 @@ class AICORepo(Repo):
         self._current_version = new_version
     
     def get_doc_path(self, doc_type: DocType, **context):
+
+        template = self._PATH_TEMPLATES[doc_type]
         if "service" in context:
             service_name = context["service"]
             if not re.match(r"^[a-zA-Z0-9_-]+$", service_name):
                 raise ValueError(f"Invalid service name: {service_name}")
-        
-        template = self._PATH_TEMPLATES[doc_type]
         # 自动注入当前版本
         rel_path = template.format(
             version=self.current_version,
@@ -129,19 +172,19 @@ class AICORepo(Repo):
         """确保所有父目录存在"""
         full_path = self.get_doc_path(doc_type, **context)
         full_path.parent.mkdir(parents=True, exist_ok=True)  # 递归创建目录
+        return full_path
+
+    def ensure_specs_exist(self):
+        """确保所有规范文件存在"""
+        for spec in self._PATH_SPECS_FILES:
+            if not (self.path / spec).exists():
+                raise FileNotFoundError(f"未找到规范文件：{spec}")
+    def print_path(self):
+        """打印当前repo下所有文件夹和文件路径"""
+        for path in self.path.iterdir():
+            print(path)
+
     
-    def _classify_document(self, path: Path) -> str:
-        """根据路径分类文档类型"""
-        rel_path = str(path.relative_to(self.path))
-        if "specs/" in rel_path:
-            return "specs"
-        if "requirements/" in rel_path:
-            return "requirements"
-        if "design/" in rel_path:
-            return "design"
-        if "tracking/" in rel_path or "releases/" in rel_path:
-            return "operations"
-        return "others"
 
 class AICODocument(Document):
     """
@@ -176,13 +219,24 @@ class AICODocument(Document):
                     raise ValueError(f"Invalid component name: {comp_name}")
         
         path = repo.get_doc_path(doc_type, **context)
-        return cls(
+        doc = cls(
             content=content,
             path=path,
             doc_type=doc_type,
             version=repo.current_version,
             metadata=context
         )
+        
+        # 确保目录存在
+        repo.ensure_directory(doc_type, **context)
+        
+        # 持久化存储
+        doc.to_path()  # 调用父类的保存方法
+        
+        # 更新搜索索引
+        # await self._cache_document_metadata(doc)
+        
+        return doc
     
     def get_metadata(self) -> dict:
         return {
@@ -221,9 +275,9 @@ class AICOTemplate:
             DocType.TECH_ARCH: cls._tech_arch_template,
             DocType.PRD: cls._prd_template,
             DocType.SERVICE_DESIGN: cls._service_design_template,
-            DocType.TEST_CASE: cls._test_case_template,
-            DocType.REQUIREMENT_ANALYZED: cls._requirement_analysis_template,
-            DocType.API_SPEC: cls._api_spec_template
+            DocType.TEST_CASE_DESIGN: cls._test_case_template,
+            DocType.BIZ_REQUIREMENT: cls._requirement_analysis_template,
+            DocType.API_DESIGN: cls._api_spec_template
         }.get(doc_type, cls._default_template)
         return generator(params)
     
@@ -342,24 +396,47 @@ class AICODocManager:
     - 协调仓库、模板、存储等组件的交互
     """
     
-    def __init__(self, repo: AICORepo, embed_model = None, llm = None):
-        self.repo = repo
-        self.redis = Redis(config.redis)
+    def __init__(self, repo: Union[Path, AICORepo], specs: List[Path] = None, embed_model=None, llm=None):
+        # 统一处理路径输入
+        if isinstance(repo, Path):
+            if repo.exists():
+                self.repo = AICORepo(repo)
+            else:
+                assert specs is not None, "specs参数不能为空"
+                self.repo = AICORepo.init_project(repo, specs)
+        elif isinstance(repo, AICORepo):
+            self.repo = repo
+        else:
+            raise TypeError("repo参数必须是Path或AICORepo类型")     
+
         self.search_engine = self._init_search_engine(embed_model, llm)
+    
+    @classmethod
+    def from_path(cls, path: Path, **kwargs):
+        """替代构造函数：从路径初始化"""
+        return cls(AICORepo(path), **kwargs)
+    
+    @classmethod
+    def from_repo(cls, repo: AICORepo, **kwargs):
+        """替代构造函数：从已有仓库初始化""" 
+        return cls(repo, **kwargs)
     
     def _init_search_engine(self, embed_model = None, llm = None) -> SimpleEngine:
         """初始化文档检索引擎"""
+        
         documents = [
             doc for doc in self.repo.get_text_documents()
             if isinstance(doc, AICODocument)
         ]
-        # 使用mock embedding替代真实调用
-        embed_model = embed_model if embed_model else get_embedding()
+
+
+        if embed_model is None:
+            embed_model = get_embedding()
 
         engine = SimpleEngine.from_objs(
             objs=documents,
             retriever_configs=[FAISSRetrieverConfig()],
-            embed_model=embed_model,
+            embed_model=embed_model,  # 确保传入正确类型的embed_model
             llm=llm
         )
         return engine
@@ -389,25 +466,15 @@ class AICODocManager:
         # 持久化存储
         full_path = doc.path  # 直接使用get_doc_path生成的绝对路径
         full_path.write_text(doc.content)
-        
-
-
-        
+    
         # 更新搜索索引
         self.search_engine.add_objs([doc])
         
         # 缓存元数据
-        await self._cache_document_metadata(doc)
+        # await self._cache_document_metadata(doc)
         
         return doc
     
-    async def _cache_document_metadata(self, doc: AICODocument):
-        """缓存文档元数据到Redis"""
-        await self.redis.set(
-            f"doc:{doc.doc_type}:{doc.version}",
-            doc.json(),
-            timeout_sec=3600*24  # 缓存24小时
-        )
     
     async def get_document(self, doc_type: DocType, context: dict = None) -> Optional[AICODocument]:
         """获取指定文档"""
@@ -457,27 +524,6 @@ class AICODocManager:
                 
         return sorted(results, key=lambda x: x["score"], reverse=True)
     
-    # async def get_version_history(self, doc_type: DocType) -> List[AICODocument]:
-    #     """获取文档版本历史"""
-    #     keys = await self.redis.keys(f"doc:{doc_type.value}:*")
-    #     history = []
-    #     for key in keys:
-    #         data = await self.redis.get(key)
-    #         if data:
-    #             history.append(AICODocument.parse_raw(data))
-    #     return sorted(history, key=lambda x: x.version, reverse=True)
-    
-    # async def generate_summary(self, content: str, max_words: int = 200) -> str:
-    #     """生成文档摘要"""
-    #     if self.llm is None:
-    #         return content[:max_words]
-        
-    #     prompt = (
-    #         f"请为以下内容生成不超过{max_words}字的摘要：\n\n"
-    #         f"{content}\n\n"
-    #         "摘要："
-    #     )
-    #     return await self.llm.aask(prompt)
     
     def get_specification(self, spec_type: DocType) -> str:
         """获取项目规范内容"""

@@ -7,6 +7,9 @@ logger = logging.getLogger(__name__)
 class AICOVersionManager:
     """语义化版本管理服务（增强初始化逻辑）"""
     
+
+
+    
     def __init__(self, project_root: Path):
         """
         初始化版本管理服务，如果 project_root 不存在，则不进行版本文件操作，
@@ -48,6 +51,11 @@ class AICOVersionManager:
         temp = cls(Path("."))  # 使用有效路径初始化
         temp.validate_version(version)
         return temp
+    
+    @classmethod
+    def from_path(cls, path: Path, **kwargs):
+        """替代构造函数：从路径初始化"""
+        return cls(path, **kwargs)
 
     def validate_version(self, input_version: str):
         """更健壮的版本校验"""

@@ -54,7 +54,11 @@ def mock_embedding():
 def doc_manager(tmp_project, mock_embedding, mock_llm):
     """创建文档管理器实例"""
     repo = AICORepo(tmp_project)
-    manager = AICODocManager(repo, mock_embedding, mock_llm)
+    manager = AICODocManager(
+        repo=repo,
+        embed_model=mock_embedding,
+        llm=mock_llm
+    )
     
     return manager
 
@@ -80,28 +84,13 @@ class TestAICORepo:
         assert (tmp_project / "VERSION").read_text() == "2.0.0"
         assert repo.current_version == "2.0.0"
     
-    def test_document_classification(self, tmp_project):
-        """场景：验证文档自动分类逻辑"""
-        repo = AICORepo(tmp_project)
-        
-        # 测试规范文档分类
-        spec_path = tmp_project / "docs/specs/pm_guide.md"
-        assert repo._classify_document(spec_path) == "specs"
-        
-        # 测试需求文档分类
-        req_path = tmp_project / "docs/requirements/raw/req001.md"
-        assert repo._classify_document(req_path) == "requirements"
-        
-        # 测试设计文档分类
-        design_path = tmp_project / "docs/design/services/auth/v1/service_design.md"
-        assert repo._classify_document(design_path) == "design"
 
     def test_invalid_service_name(self, tmp_project):
         """测试无效服务名称的路径生成"""
         repo = AICORepo(tmp_project)
         
         with pytest.raises(ValueError):
-            repo.get_doc_path(DocType.API_SPEC, service="invalid/service/name")
+            repo.get_doc_path(DocType.API_DESIGN, service="invalid/service/name")
 
     def test_invalid_component_name(self, tmp_project):
         """测试无效组件名称处理"""
@@ -129,7 +118,11 @@ class TestAICODocument:
         )
         assert doc.version == "1.0.0"
         assert doc.doc_type == DocType.TECH_ARCH
-        assert "docs/ea/tech_arch/1.0.0/tech_arch.md" in str(doc.path)
+        assert "docs/ea/1.0.0/tech_arch.md" in str(doc.path)
+        
+        # 新增文件存在性检查
+        assert doc.path.exists()
+        assert "架构内容" in doc.path.read_text()
 
 class TestAICODocManager:
     """测试文档服务核心功能"""
@@ -152,7 +145,7 @@ class TestAICODocManager:
         assert "用户登录场景" in full_path.read_text()
         
         # 验证用户故事路径
-        assert "docs/requirements/analyzed/1.0.0/user_stories.md" in str(doc.path)
+        assert "docs/ea/1.0.0/user_stories.md" in str(doc.path)
         
         # 读取文档
         read_doc = await doc_manager.get_document(
@@ -181,11 +174,11 @@ class TestAICODocManager:
         assert "![架构图](arch.png)" in tech_arch_doc.content
         
         # 验证技术架构路径
-        assert "docs/ea/tech_arch/1.0.0/tech_arch.md" in str(tech_arch_doc.path)
+        assert "docs/ea/1.0.0/tech_arch.md" in str(tech_arch_doc.path)
         
         # 测试测试用例模板
         test_case_doc = await doc_manager.create_document(
-            DocType.TEST_CASE,
+            DocType.TEST_CASE_DESIGN,
             service="auth",
             cases=[{
                 "title": "登录测试",
@@ -232,12 +225,13 @@ class TestAICODocManager:
 @pytest.mark.asyncio
 async def test_edge_cases(tmp_project, monkeypatch):
     """边界条件测试套件"""
-    # 测试空仓库初始化
-    empty_repo = AICORepo(Path("/non_exist"))
-    assert empty_repo.current_version == "0.0.0"
+    # 测试空仓库初始化应抛出异常
+    with pytest.raises(ValueError):
+        AICORepo(Path("/non_exist"))
     
     # 测试无效文档获取
-    manager = AICODocManager(empty_repo)
+    valid_repo = AICORepo(tmp_project)
+    manager = AICODocManager(valid_repo)
     doc = await manager.get_document(DocType.PRD)
     assert doc is None
 
@@ -276,7 +270,7 @@ class TestAICOTemplate:
         """场景：验证接口规范模板生成"""
         from metagpt.ext.aico.services.doc_manager import AICOTemplate
         
-        content = AICOTemplate.generate(DocType.API_SPEC, {
+        content = AICOTemplate.generate(DocType.API_DESIGN, {
             "service": "auth",
             "version": "1.0.0",
             "apis": [
@@ -309,24 +303,40 @@ class TestAICOTemplate:
 def test_api_spec_path(tmp_project):
     """验证API规范路径生成"""
     repo = AICORepo(tmp_project)
-    path = repo.get_doc_path(DocType.API_SPEC, service="auth")
+    path = repo.get_doc_path(DocType.API_DESIGN, service="auth")
     # 转换为相对路径后再断言
     rel_path = path.relative_to(tmp_project)
-    assert str(rel_path) == "docs/api/1.0.0/spec.md"
+    assert str(rel_path) == "docs/design/services/auth/1.0.0/api_design.md"
 
 def test_version_directory_creation(tmp_project):
     """验证版本更新时目录创建"""
     repo = AICORepo(tmp_project)
     repo.update_version("2.0.0")
     
+    # 创建文档时使用正确的参数名req_id
+    doc = AICODocument.create(
+        repo=repo,
+        doc_type=DocType.BIZ_REQUIREMENT,
+        req_id="REQ001",
+        content="业务需求分析",
+        version="2.0.0"
+    )
+
     expected_dirs = [
-        "docs/requirements/analyzed/2.0.0",
-        "docs/ea/tech_arch/2.0.0",
-        "docs/api/2.0.0",  # 修正预期路径
-        "releases/2.0.0"
+        "docs/requirements/analyzed/2.0.0/REQ001",  # 需求分析目录
     ]
     for d in expected_dirs:
-        assert (tmp_project / d).exists()
+        assert (tmp_project / d).exists(), f"目录不存在: {d}"
+    
+
+
+    # 验证文件路径
+    expected_file = tmp_project / "docs/requirements/analyzed/2.0.0/REQ001/biz_analysis.md"
+    assert expected_file.exists(), "需求分析文件未生成"
+    
+    # 验证版本文件
+    version_file = tmp_project / "VERSION"
+    assert version_file.read_text() == "2.0.0"
 
 @pytest.mark.asyncio
 async def test_invalid_doc_creation(doc_manager):
@@ -348,5 +358,22 @@ async def test_nonexistent_doc_retrieval(doc_manager):
         context={"identifier": "NON_EXIST"}
     )
     assert doc is None
+
+# 补充测试新的文档类型
+def test_service_design_document(tmp_project):
+    repo = AICORepo(tmp_project)
+    path = repo.get_doc_path(DocType.SERVICE_DESIGN, service="payment", version="1.0.0")
+    assert str(path.relative_to(tmp_project)) == "docs/design/services/payment/1.0.0/service_design.md"
+
+# 测试新增的组件名称校验
+def test_component_name_validation(tmp_project):
+    repo = AICORepo(tmp_project)
+    with pytest.raises(ValueError):
+        AICODocument.create(
+            repo=repo,
+            doc_type=DocType.TECH_ARCH,
+            content="test",
+            components=[{"name": "invalid*comp", "description": ""}]
+        )
 
 
