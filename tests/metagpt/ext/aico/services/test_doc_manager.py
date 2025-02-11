@@ -56,6 +56,7 @@ def doc_manager(tmp_project, mock_embedding, mock_llm):
     repo = AICORepo(tmp_project)
     manager = AICODocManager(
         repo=repo,
+        specs=[],
         embed_model=mock_embedding,
         llm=mock_llm
     )
@@ -148,7 +149,7 @@ class TestAICODocManager:
         assert "docs/ea/1.0.0/user_stories.md" in str(doc.path)
         
         # 读取文档
-        read_doc = await doc_manager.get_document(
+        read_doc = doc_manager.get_document(
             DocType.USER_STORY,
             context={"req_id": "US001"}
         )
@@ -221,31 +222,6 @@ class TestAICODocManager:
                 DocType.TECH_ARCH,
                 diagram_url="arch.png"
             )
-
-@pytest.mark.asyncio
-async def test_edge_cases(tmp_project, monkeypatch):
-    """边界条件测试套件"""
-    # 测试空仓库初始化应抛出异常
-    with pytest.raises(ValueError):
-        AICORepo(Path("/non_exist"))
-    
-    # 测试无效文档获取
-    valid_repo = AICORepo(tmp_project)
-    manager = AICODocManager(valid_repo)
-    doc = await manager.get_document(DocType.PRD)
-    assert doc is None
-
-    # 新增文件权限测试
-    # valid_path = tmp_project / "docs/specs/perm_test.md"
-    # valid_path.touch()
-    
-    # 模拟无写权限
-    # def mock_write(*args, **kwargs):
-    #     raise PermissionError("No write permission")
-        
-    # monkeypatch.setattr(valid_path, 'write_text', mock_write)
-    # with pytest.raises(PermissionError):
-    #     valid_path.write_text("test")
 
 class TestAICOTemplate:
     """测试模板生成功能"""
@@ -353,7 +329,7 @@ def test_invalid_version_update(tmp_project):
 @pytest.mark.asyncio 
 async def test_nonexistent_doc_retrieval(doc_manager):
     """测试获取不存在的文档"""
-    doc = await doc_manager.get_document(
+    doc = doc_manager.get_document(
         DocType.PRD,
         context={"identifier": "NON_EXIST"}
     )

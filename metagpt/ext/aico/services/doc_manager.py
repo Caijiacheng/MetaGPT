@@ -245,6 +245,9 @@ class AICODocument(Document):
             "path": str(self.path.relative_to(self.repo.path))
         }
     
+    def get_path(self) -> Path:
+        return self.path
+    
     def rag_key(self) -> str:
         """实现RAGObject接口，提供检索用的文本内容"""
         return f"{self.doc_type.value}_{self.version}\n{self.content}"
@@ -397,49 +400,45 @@ class AICODocManager:
     """
     
     def __init__(self, repo: Union[Path, AICORepo], specs: List[Path] = None, embed_model=None, llm=None):
-        # 统一处理路径输入
+        # 修改后的初始化逻辑
         if isinstance(repo, Path):
-            if repo.exists():
-                self.repo = AICORepo(repo)
-            else:
-                assert specs is not None, "specs参数不能为空"
-                self.repo = AICORepo.init_project(repo, specs)
-        elif isinstance(repo, AICORepo):
-            self.repo = repo
+            self.repo = AICORepo(repo) if repo.exists() else None
         else:
-            raise TypeError("repo参数必须是Path或AICORepo类型")     
-
-        self.search_engine = self._init_search_engine(embed_model, llm)
-    
-    @classmethod
-    def from_path(cls, path: Path, **kwargs):
-        """替代构造函数：从路径初始化"""
-        return cls(AICORepo(path), **kwargs)
-    
-    @classmethod
-    def from_repo(cls, repo: AICORepo, **kwargs):
-        """替代构造函数：从已有仓库初始化""" 
-        return cls(repo, **kwargs)
+            self.repo = repo
+        
+        # 允许specs为空（已有项目）
+        self.specs = specs or []
+        
+        # 初始化搜索引擎
+        self.search_engine = self._init_search_engine(embed_model, llm)  # 新增初始化
     
     def _init_search_engine(self, embed_model = None, llm = None) -> SimpleEngine:
         """初始化文档检索引擎"""
-        
-        documents = [
-            doc for doc in self.repo.get_text_documents()
-            if isinstance(doc, AICODocument)
-        ]
-
-
+        # 确保embed_model和llm有默认值
         if embed_model is None:
             embed_model = get_embedding()
-
-        engine = SimpleEngine.from_objs(
-            objs=documents,
+        if llm is None:
+            llm = config.llm
+        
+        return SimpleEngine.from_objs(
+            objs=self.repo.get_text_documents(),
             retriever_configs=[FAISSRetrieverConfig()],
-            embed_model=embed_model,  # 确保传入正确类型的embed_model
+            embed_model=embed_model,
             llm=llm
         )
-        return engine
+    
+    def init_repo(self):
+        """初始化新仓库"""
+        if not self.repo:
+            self.repo = AICORepo.create(self.repo_path)
+            # 复制规范文件
+            for spec in self.specs:
+                shutil.copy(spec, self.repo.specs_dir)
+    
+    @classmethod
+    def from_repo(cls, repo_path: Path, specs: List[Path] = None):
+        """加载已有仓库时允许specs为空"""
+        return cls(repo=repo_path, specs=specs)
     
     async def create_document(self, doc_type: DocType, **context):
         # 添加文档类型校验
@@ -476,8 +475,8 @@ class AICODocManager:
         return doc
     
     
-    async def get_document(self, doc_type: DocType, context: dict = None) -> Optional[AICODocument]:
-        """获取指定文档"""
+    def get_document(self, doc_type: DocType, context: dict = None) -> Optional[AICODocument]:
+        """同步获取指定文档"""
         path = self.repo.get_doc_path(doc_type, **(context or {}))
         full_path = self.repo.path / path
         if not full_path.exists():
