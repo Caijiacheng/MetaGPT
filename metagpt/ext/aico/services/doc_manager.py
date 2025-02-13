@@ -13,10 +13,6 @@ from metagpt.utils.embedding import get_embedding
 from metagpt.utils.redis import Redis
 from metagpt.config2 import config
 
-from metagpt.rag.engines.simple import SimpleEngine
-from metagpt.rag.schema import FAISSRetrieverConfig
-
-
 class DocType(str, Enum):
     """
     AICO文档类型枚举
@@ -410,50 +406,20 @@ class AICODocManager:
     - 协调仓库、模板、存储等组件的交互
     """
     
-    def __init__(self, repo: Union[Path, AICORepo], specs: List[Path] = None, embed_model=None, llm=None):
-        # 如果传入的是路径，则判断该路径是否存在
+    def __init__(self, repo: Union[Path, AICORepo], specs: List[Path] = None):
         if isinstance(repo, Path):
             if repo.exists():
                 self.repo = AICORepo(repo)
             else:
-                # 如果项目仓库不存在，则调用初始化函数创建
                 self.repo = AICORepo.init_project(repo, specs or [])
         else:
             self.repo = repo
         
-        # 允许specs为空（已有项目）
         self.specs = specs or []
-        
-        # 初始化搜索引擎，确保后续调用self.repo.get_text_documents()不会出错
-        self.search_engine = self._init_search_engine(embed_model, llm)
-    
-    def _init_search_engine(self, embed_model = None, llm = None) -> SimpleEngine:
-        """初始化文档检索引擎"""
-        # 确保embed_model和llm有默认值
-        if embed_model is None:
-            embed_model = get_embedding()
-        if llm is None:
-            llm = config.llm
-        
-        return SimpleEngine.from_objs(
-            objs=self.repo.get_text_documents(),
-            retriever_configs=[FAISSRetrieverConfig()],
-            embed_model=embed_model,
-            llm=llm
-        )
-    
-    def init_repo(self):
-        """初始化新仓库"""
-        if not self.repo:
-            self.repo = AICORepo.create(self.repo_path)
-            # 复制规范文件
-            for spec in self.specs:
-                shutil.copy(spec, self.repo.specs_dir)
     
     @classmethod
-    def from_repo(cls, repo_path: Path, specs: List[Path] = None, embed_model=None, llm=None):
-        """加载已有仓库时允许specs为空"""
-        return cls(repo=repo_path, specs=specs, embed_model=embed_model, llm=llm)
+    def from_repo(cls, repo_path: Path, specs: List[Path] = None):
+        return cls(repo=repo_path, specs=specs)
     
     async def create_document(self, doc_type: DocType, **context):
         # 添加文档类型校验
@@ -480,12 +446,6 @@ class AICODocManager:
         # 持久化存储
         full_path = doc.path  # 直接使用get_doc_path生成的绝对路径
         full_path.write_text(doc.content)
-    
-        # 更新搜索索引
-        self.search_engine.add_objs([doc])
-        
-        # 缓存元数据
-        # await self._cache_document_metadata(doc)
         
         return doc
     
@@ -505,41 +465,6 @@ class AICODocManager:
             version=self.repo.current_version,
             metadata=context
         )
-    
-    async def search_documents(self, query: str, doc_types: List[DocType] = None, limit: int = 5) -> List[dict]:
-        """语义化文档搜索
-        
-        Args:
-            query: 搜索查询语句
-            doc_types: 文档类型过滤列表,为空则搜索所有类型
-            limit: 返回结果数量限制
-            
-        Returns:
-            List[dict]: 搜索结果列表,每个结果包含content、metadata和score
-        """
-        # 从上下文看,search_engine是SimpleEngine实例
-        # aretrieve返回的是NodeWithScore列表
-        nodes = await self.search_engine.aretrieve(query)
-        
-        results = []
-        for node in nodes:
-            # 检查文档类型是否匹配过滤条件
-            if doc_types and DocType(node.metadata["doc_type"]) not in doc_types:
-                continue
-            print(node.metadata)
-            print(node.text)
-            print(node.score)
-            results.append({
-                "content": node.text, 
-                "metadata": node.metadata,
-                "score": node.score
-            })
-            
-            if len(results) >= limit:
-                break
-                
-        return sorted(results, key=lambda x: x["score"], reverse=True)
-    
     
     def get_specification(self, spec_type: DocType) -> str:
         """获取项目规范内容"""

@@ -15,10 +15,6 @@ from metagpt.ext.aico.services.doc_manager import AICODocManager, AICORepo, AICO
 from metagpt.config2 import  config
 
 
-from llama_index.core.embeddings import MockEmbedding
-from llama_index.core.llms import MockLLM
-
-
 @pytest.fixture
 def tmp_project(tmp_path):
     """按规范初始化目录结构"""
@@ -41,28 +37,6 @@ def tmp_project(tmp_path):
     return tmp_path
 
 
-@pytest.fixture
-def mock_llm():
-    return MockLLM()
-
-@pytest.fixture
-def mock_embedding():
-    return MockEmbedding(embed_dim=1536)
-
-
-@pytest.fixture
-def doc_manager(tmp_project, mock_embedding, mock_llm):
-    """创建文档管理器实例"""
-    repo = AICORepo(tmp_project)
-    manager = AICODocManager(
-        repo=repo,
-        specs=[],
-        embed_model=mock_embedding,
-        llm=mock_llm
-    )
-    
-    return manager
-
 @pytest.fixture(autouse=True)
 def mock_env(monkeypatch):
     """模拟运行环境"""
@@ -70,6 +44,16 @@ def mock_env(monkeypatch):
     monkeypatch.setattr(config.embedding, 'api_type', 'mock')
     config.omniparse.base_url = "http://mock-omniparse"
     config.omniparse.api_key = "test-key"
+
+@pytest.fixture
+def doc_manager(tmp_project):
+    """创建文档管理器实例"""
+    repo = AICORepo(tmp_project)
+    manager = AICODocManager(
+        repo=repo,
+        specs=[]
+    )
+    return manager
 
 class TestAICORepo:
     """测试仓库管理功能"""
@@ -155,11 +139,6 @@ class TestAICODocManager:
         )
         assert read_doc is not None
         assert read_doc.content == doc.content
-        
-        # 搜索文档
-        results = await doc_manager.search_documents("用户登录场景", limit=5)
-        assert len(results) > 0
-        assert "用户登录" in results[0]['content']
     
     
     @pytest.mark.asyncio
