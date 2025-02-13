@@ -6,7 +6,9 @@ logger = logging.getLogger(__name__)
 
 class AICOVersionManager:
     """语义化版本管理服务（增强初始化逻辑）"""
-    
+
+
+    __init_version__: str = "1.0.0"
 
     def __init__(self, project_root: Path):
         """
@@ -18,7 +20,7 @@ class AICOVersionManager:
             self.current_version = self._load_or_init_version()
         else:
             # 新项目未创建目录时，先设置一个默认版本，后续由项目初始化流程统一创建目录
-            self.current_version = "0.1.0"
+            self.current_version = self.__init_version__
         
     @property
     def current(self) -> str:
@@ -33,22 +35,18 @@ class AICOVersionManager:
         version_file = self.project_root / "VERSION"
         
         if version_file.exists():
-            return version_file.read_text(encoding="utf-8").strip()
+            version = version_file.read_text(encoding="utf-8").strip()
+            self.validate_version(version)
+            return version
         
         # 确保项目根目录存在（当通过AICOProjectManager初始化时会自动创建）
         self.project_root.mkdir(parents=True, exist_ok=True)
         
         # 初始化版本文件
-        initial_version = "1.0.0"
+        initial_version = self.__init_version__
         version_file.write_text(initial_version, encoding="utf-8")
         return initial_version
     
-    @classmethod
-    def from_version(cls, version: str):
-        # 创建临时对象用于验证版本格式
-        temp = cls(Path("."))  # 使用有效路径初始化
-        temp.validate_version(version)
-        return temp
     
     @classmethod
     def from_path(cls, path: Path, **kwargs):
@@ -62,14 +60,6 @@ class AICOVersionManager:
             raise ValueError(f"无效版本格式: {input_version}")
         # 移除与current_version的对比检查（初始化时可能不一致是正常的）
     
-    def generate_first_release(self) -> str:
-        """生成首个正式版本（从0.1.0→1.0.0）"""
-        if self.current_version != "0.1.0":
-            raise ValueError("只能在初始化版本生成首个正式版本")
-            
-        self.current_version = "1.0.0"
-        self._update_version_file()
-        return self.current_version
     
     def bump(self, change_type: str) -> str:
         """
@@ -100,18 +90,10 @@ def get_current_version(project_root: Path) -> str:
     """从VERSION文件获取当前版本"""
     version_file = project_root / "VERSION"
     if not version_file.exists():
-        return "1.0.0"
+        raise ValueError("版本文件不存在")
     
-    with open(version_file, "r") as f:
-        version = f.read().strip()
-    
-    # 格式校验
-    try:
-        AICOVersionManager.from_version(version)
-        return version
-    except ValueError:
-        logger.error(f"VERSION文件格式错误: {version}")
-        return "1.0.0"
+    return AICOVersionManager(project_root).current_version;
+
 
 def update_version_file(project_root: Path, new_version: str):
     """更新VERSION文件"""

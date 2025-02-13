@@ -38,7 +38,7 @@ def test_init_new_project(tmp_project):
     # 测试新项目初始化
     manager = AICOVersionManager(tmp_project)
     assert (tmp_project / "VERSION").exists()
-    assert manager.current_version == "0.1.0"
+    assert manager.current_version == "1.0.0"
 
 def test_validate_version_failure(tmp_project):
     # 测试版本格式校验失败场景
@@ -58,21 +58,6 @@ def test_validate_version_failure(tmp_project):
         with pytest.raises(ValueError) as e:
             manager.validate_version(version)
         assert f"无效版本格式: {version}" in str(e.value)
-
-def test_generate_first_release_success(tmp_project):
-    # 测试生成首个正式版本
-    manager = AICOVersionManager(tmp_project)
-    new_version = manager.generate_first_release()
-    assert new_version == "1.0.0"
-    assert (tmp_project / "VERSION").read_text().strip() == "1.0.0"
-
-def test_generate_first_release_failure(tmp_project):
-    # 测试非法生成首个版本
-    manager = AICOVersionManager(tmp_project)
-    manager.current_version = "0.2.0"
-    with pytest.raises(ValueError) as e:
-        manager.generate_first_release()
-    assert "只能在初始化版本生成首个正式版本" in str(e.value)
 
 @pytest.mark.parametrize("change_type, expected", [
     ("major", "2.0.0"),
@@ -95,28 +80,29 @@ def test_invalid_bump_type(tmp_project):
     assert "无效变更类型: invalid" in str(e.value)
 
 def test_get_current_version_fallback(tmp_project):
-    # 测试版本文件缺失时的默认值
-    version = get_current_version(tmp_project)
-    assert version == "1.0.0"
+    # 测试版本文件缺失时的默认值（需要捕获异常）
+    with pytest.raises(ValueError) as e:
+        get_current_version(tmp_project)
+    assert "版本文件不存在" in str(e.value)
 
 def test_corrupted_version_file(tmp_project, caplog):
     # 测试损坏的版本文件处理
     version_file = tmp_project / "VERSION"
     version_file.write_text("invalid-version")
     
-    version = get_current_version(tmp_project)
-    assert version == "1.0.0"
-    assert "VERSION文件格式错误" in caplog.text
+    # 需要先创建AICOVersionManager实例触发校验
+    with pytest.raises(ValueError) as e:
+        AICOVersionManager(tmp_project)
+    assert "无效版本格式" in str(e.value)
+    assert "invalid-version" in str(e.value)
 
 def test_full_workflow(tmp_project):
     # 测试完整工作流程
     # 1. 初始化新项目
     manager = AICOVersionManager(tmp_project)
-    assert manager.current_version == "0.1.0"
-    
-    # 2. 生成首个正式版本
-    manager.generate_first_release()
     assert manager.current_version == "1.0.0"
+    
+    # 2. 移除generate_first_release步骤
     
     # 3. 进行多次版本升级
     assert manager.bump("minor") == "1.1.0"
