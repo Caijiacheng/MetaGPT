@@ -8,8 +8,6 @@ class AICOVersionManager:
     """语义化版本管理服务（增强初始化逻辑）"""
     
 
-
-    
     def __init__(self, project_root: Path):
         """
         初始化版本管理服务，如果 project_root 不存在，则不进行版本文件操作，
@@ -30,20 +28,20 @@ class AICOVersionManager:
         """
         return self.current_version
 
-    def _load_or_init_version(self):
-        """
-        尝试加载 VERSION 文件；如果不存在，则初始化文件并写入默认版本
-        """
+    def _load_or_init_version(self) -> str:
+        """加载或初始化版本号"""
         version_file = self.project_root / "VERSION"
-        initial_version = "0.1.0"
-        # 确保目录存在
-        version_file.parent.mkdir(parents=True, exist_ok=True)
+        
         if version_file.exists():
-            version = version_file.read_text().strip()
-            return version if version else initial_version
-        else:
-            version_file.write_text(initial_version + "\n")
-            return initial_version
+            return version_file.read_text(encoding="utf-8").strip()
+        
+        # 确保项目根目录存在（当通过AICOProjectManager初始化时会自动创建）
+        self.project_root.mkdir(parents=True, exist_ok=True)
+        
+        # 初始化版本文件
+        initial_version = "1.0.0"
+        version_file.write_text(initial_version, encoding="utf-8")
+        return initial_version
     
     @classmethod
     def from_version(cls, version: str):

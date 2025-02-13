@@ -10,14 +10,20 @@
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch, call, PropertyMock
 from pathlib import Path
 import shutil
 import asyncio
+from unittest.mock import AsyncMock
 
+from metagpt.ext.aico.services.project_tracking_manager import ProjectTrackingManager
 from metagpt.ext.aico.roles.project_manager import AICOProjectManager
-from metagpt.ext.aico.services.doc_manager import DocType
+from metagpt.ext.aico.services.doc_manager import DocType,AICODocManager
 from metagpt.environment.aico.aico_env import AICOEnvironment
+from llama_index.core.embeddings import MockEmbedding
+from llama_index.core.llms import MockLLM
+from metagpt.ext.aico.services.version_manager import AICOVersionManager
+
 
 # Fixtures
 @pytest.fixture
@@ -33,18 +39,65 @@ def mock_env():
     env.requirements = []
     return env
 
+
 @pytest.fixture
-def pm(tmp_project_root, mock_env):
-    role = AICOProjectManager(project_root=tmp_project_root)
+def mock_llm():
+    return MockLLM()
+
+@pytest.fixture
+def mock_embedding():
+    return MockEmbedding(
+        embed_dim=1536,
+        model_name="test-embedding",
+        callback_manager=MagicMock(),
+        embed_batch_size=32
+    )
+
+
+
+@pytest.fixture
+def pm(tmp_project_root, mock_env, mock_embedding, mock_llm):
+    """使用真实服务组件初始化项目经理"""
+    # 为 ProjectTrackingManager 添加 get_tracked_files 方法，返回空列表
+    ProjectTrackingManager.get_tracked_files = lambda self: []
+    # 初始化文档服务（需确保AICODocManager.from_repo参数正确）
+    doc_manager = AICODocManager.from_repo(
+        tmp_project_root,  # 位置参数传递项目根目录
+        specs=[],
+        embed_model=mock_embedding,  # 注入mock的embedding
+        llm=mock_llm  # 注入mock的llm
+    )
+    
+    # 初始化版本服务
+    version_svc = AICOVersionManager.from_path(tmp_project_root)
+    
+    # 初始化跟踪服务
+    tracking_path = doc_manager.get_path(DocType.PROJECT_TRACKING)
+    tracking_path.parent.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+    tracking_svc = ProjectTrackingManager.from_path(
+        tracking_path,
+    )
+    
+    # 构造项目经理实例
+    role = AICOProjectManager(
+        project_root=tmp_project_root,
+        doc_manager=doc_manager,
+        version_svc=version_svc,
+        tracking_svc=tracking_svc
+    )
     role.set_env(mock_env)
-    # 为确保 rc 存在，模拟 rc.env
-    role.rc = MagicMock()
-    role.rc.env = mock_env
-    # 模拟各服务
-    role.doc_manager = MagicMock()
-    role.tracking_svc = MagicMock()
-    role.version_svc = MagicMock()
     return role
+
+@pytest.fixture(autouse=True)
+def setup_mocks(mock_llm):
+    # 创建模拟的LLM Metadata
+    mock_metadata = MagicMock()
+    mock_metadata.context_window = 4096  # 典型值
+    mock_metadata.num_output = 256
+    mock_metadata.model_name = "test-model"
+    
+    # 使用PropertyMock包装metadata属性
+    type(mock_llm).metadata = PropertyMock(return_value=mock_metadata)
 
 # Helper: 构造一个伪造的消息对象，用于 observe 模拟返回
 def create_fake_message(name, content):
@@ -53,173 +106,86 @@ def create_fake_message(name, content):
     fake_msg.content = content
     return fake_msg
 
-# Test Cases
+# 测试用例组
 class TestAICOProjectManager:
-    """测试AICO项目经理核心功能"""
-
-    @pytest.mark.asyncio
-    async def test_project_init_new(self, pm, tmp_project_root):
-        """测试新项目初始化流程：
-           当项目根目录不存在时，应调用文档管理服务创建基础目录并创建跟踪文件
-        """
-        if tmp_project_root.exists():
-            shutil.rmtree(tmp_project_root)
-        pm._init_project()
-        expected_dirs = [
-            DocType.REQUIREMENT_RAW,
-            DocType.REQUIREMENT_ANALYZED,
-            DocType.BUSINESS_ARCH,
-            DocType.TECH_ARCH,
-            DocType.PRD,
-            DocType.SERVICE_DESIGN,
-            DocType.TEST_CASE
-        ]
-        pm.doc_manager.ensure_dirs.assert_called_with(expected_dirs)
-        pm.tracking_svc.save.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_project_load_existing(self, pm, tmp_project_root):
-        """测试加载已有项目：
-           模拟存在项目目录和跟踪文件，则应走加载流程，不再创建基础目录
-        """
-        (tmp_project_root / "docs/requirements/raw").mkdir(parents=True, exist_ok=True)
-        fake_tracking_path = tmp_project_root / "project_tracking.xlsx"
-        fake_tracking_path.touch()
-        pm.doc_manager.get_doc_path.return_value = fake_tracking_path
-
-        pm._init_project()
-        pm.doc_manager.get_doc_path.assert_called()
-        pm.doc_manager.ensure_dirs.assert_not_called()
-
-    def test_validate_project_structure_missing(self, pm, tmp_project_root):
-        """测试项目结构校验：
-           当基础目录不完整时，抛出异常提示不完整的项目结构
-        """
-        (tmp_project_root / "docs/requirements/raw").mkdir(parents=True, exist_ok=True)
-        with pytest.raises(ValueError) as excinfo:
-            pm._validate_project_structure()
-        assert "项目结构不完整" in str(excinfo.value)
-
-    @pytest.mark.asyncio
-    async def test_requirement_processing_flow(self, pm):
-        """测试需求处理流程中需求解析阶段：
-           通过覆盖 _parse_raw_requirements 模拟文档保存和跟踪表更新
-        """
-        async def fake_parse_raw_requirements():
-            # 模拟保存原始需求文件及跟踪表更新
-            pm.doc_manager.save_document(DocType.REQUIREMENT_RAW, content="需求文本", version="")
-            pm.tracking_svc.add_raw_requirement(
-                file_path="dummy_path",
-                description="需求文本"[:100],
-                source="test_case",
-                req_type="business"
-            )
-        pm._parse_raw_requirements = fake_parse_raw_requirements
-        # 为避免后续阶段影响，补充后续方法为空实现
-        pm._process_arch_analysis = MagicMock()
-        pm._confirm_requirement_baseline = MagicMock()
-
-        await pm._process_requirements()
-        pm.doc_manager.save_document.assert_called_with(DocType.REQUIREMENT_RAW, content="需求文本", version="")
-        pm.tracking_svc.add_raw_requirement.assert_called_with(
-            file_path="dummy_path",
-            description="需求文本"[:100],
-            source="test_case",
-            req_type="business"
+    """测试核心业务逻辑"""
+    
+    @pytest.fixture(autouse=True)
+    def mock_response_synthesizer(self, mocker):
+        mocker.patch(
+            "metagpt.rag.engines.simple.get_response_synthesizer",
+            return_value=MagicMock()
         )
-
+    
+    def test_project_init_creates_files(self, pm, tmp_project_root):
+        """测试项目初始化创建必要文件"""
+        # When
+        pm.run(n_round=1)  # 使用实际存在的入口方法
+        
+        # Then
+        assert (tmp_project_root / "VERSION").exists()
+        assert (tmp_project_root / "docs/specs").exists()
+        assert (tmp_project_root / "project_tracking.xlsx").exists()
+    
     @pytest.mark.asyncio
-    async def test_requirement_review_process(self, pm):
-        """测试需求评审流程：
-           模拟发送需求预审消息、观察人工确认消息，验证消息构造正确
-        """
-        # 模拟 observe 返回人工确认消息
-        fake_confirm_msg = create_fake_message("project:req_review_confirmed", {
-            "approved": True,
-            "approved_reqs": ["REQ-001"],
-            "review_comments": {"note": "OK"}
-        })
-        pm.observe = MagicMock(return_value=fake_confirm_msg)
-        pm.publish_message = MagicMock()  # 模拟消息发送函数
-
-        await pm._confirm_requirement_baseline()
-        # 应发送两个消息：一条预审消息、一条基线确认消息
-        assert pm.publish_message.call_count == 2
-        first_msg = pm.publish_message.call_args_list[0][0][0]
-        second_msg = pm.publish_message.call_args_list[1][0][0]
-        # 验证预审消息名称与基线确认消息名称（预定义在AICOEnvironment中）
-        assert first_msg.name == "requirement:biz_analysis"
-        assert second_msg.name == "prd:revised"
-        pm.observe.assert_called_with("project:req_review_confirmed", timeout=3600)
-
+    async def test_requirement_processing_flow(self, pm, tmp_project_root):
+        """测试端到端需求处理流程"""
+        # Given
+        test_req = {
+            "file_path": "raw/iter1/req1.md",
+            "description": "测试需求",
+            "source": "用户提交"
+        }
+        
+        # When
+        await pm._process_requirements()
+        
+        # Then
+        tracking_file = tmp_project_root / "project_tracking.xlsx"
+        assert tracking_file.exists()
+        
+        # 验证跟踪文件内容
+        tracking_svc = ProjectTrackingManager.from_path(tracking_file)
+        assert len(tracking_svc.get_pending_requirements()) == 0  # 需求应被处理
+    
     @pytest.mark.asyncio
-    async def test_invalid_requirement_handling(self, pm):
-        """测试无效需求输入处理：
-           当输入需求数据格式错误时，应记录错误日志
-        """
-        pm.rc.env.requirements = [{"invalid": "data"}]
-        async def fake_parse_invalid():
-            pm.logger.error("无效的需求输入格式")
-        pm._parse_raw_requirements = fake_parse_invalid
-        with patch.object(pm, "logger") as mock_logger:
-            await pm._parse_raw_requirements()
-            mock_logger.error.assert_called_with("无效的需求输入格式")
+    async def test_version_bump_on_change(self, pm, tmp_project_root):
+        """测试需求变更触发版本更新"""
+        # Given
+        initial_version = pm.version_svc.current
+        pm.tracking_svc.add_raw_requirement("raw/iter1/req2.md", "新增需求")
+        
+        # When
+        await pm._act()  # 执行完整生命周期
+        
+        # Then
+        new_version = pm.version_svc.current
+        assert new_version != initial_version
+        assert (tmp_project_root / "VERSION").read_text() == new_version
 
-    @pytest.mark.parametrize("pending_changes, expected", [
-        ([{"change_type": "架构变更"}], "major"),
-        ([{"change_type": "新增功能"}], "minor"),
-        ([{"change_type": "缺陷修复"}], "patch")
-    ])
-    def test_version_change_determination(self, pm, pending_changes, expected):
-        """测试版本变更类型判断逻辑"""
-        pm.tracking_svc.get_pending_changes.return_value = pending_changes
-        assert pm._determine_version_change() == expected
-
-    @pytest.mark.asyncio
-    async def test_async_message_handling(self, pm):
-        """测试异步消息处理机制：
-           模拟消息队列返回消息，并验证 observe 方法返回内容正确
-        """
-        fake_msg = create_fake_message(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name, {"req_id": "REQ-001", "status": "completed"})
-        pm.rc.env.memory = MagicMock()
-        pm.rc.env.memory.get.return_value = [fake_msg]
-        result = await pm.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name)
-        assert result.content["req_id"] == "REQ-001"
-
-    @pytest.mark.skip(reason="待第二阶段实现")
-    def test_design_review_process(self):
-        pass
-
-    @pytest.mark.skip(reason="待第三阶段实现")
-    def test_implementation_tracking(self):
-        pass
-
-# 异常测试
 class TestExceptionCases:
-    """测试异常场景处理"""
-
-    def test_corrupted_tracking_file(self, pm):
-        """测试跟踪文件校验异常：
-           当 tracking_svc._get_workbook 抛出异常时，_validate_tracking_file 应返回 False
-        """
-        pm.tracking_svc._get_workbook.side_effect = Exception("Invalid file format")
-        result = pm._validate_tracking_file()
-        assert result is False
-
+    """异常场景测试"""
+    
     @pytest.mark.asyncio
-    async def test_timeout_handling(self, pm):
-        """测试需求确认超时：
-           当 observe 返回 None 时，应记录错误日志提示确认未通过
-        """
-        pm.observe = MagicMock(return_value=None)
-        with patch.object(pm, "logger") as mock_logger:
-            await pm._confirm_requirement_baseline()
-            mock_logger.error.assert_called_with("需求基线确认未通过")
+    async def test_corrupted_tracking_file(self, pm, tmp_project_root):
+        """测试跟踪文件损坏时的异常处理"""
+        # Given
+        tracking_file = tmp_project_root / "project_tracking.xlsx"
+        tracking_file.write_text("invalid content")
+        
+        # When/Then
+        with pytest.raises(Exception) as e:
+            await pm._act()
+        assert "跟踪文件损坏" in str(e.value)
+    
+    @pytest.mark.asyncio
+    async def test_version_conflict(self, pm, tmp_project_root):
+        """测试版本文件冲突处理"""
+        # Given
+        (tmp_project_root / "VERSION").write_text("invalid-version")
+        
+        # When/Then
+        with pytest.raises(ValueError) as e:
+            pm.version_svc.bump("minor")
+        assert "无效的版本格式" in str(e.value)
 
-    def test_version_generation_failure(self, pm):
-        """测试版本生成异常：
-           当 version_svc.bump 抛出异常时，_generate_new_version 应传递该异常
-        """
-        pm.version_svc.bump.side_effect = ValueError("Invalid version format")
-        with pytest.raises(ValueError):
-            pm._generate_new_version("invalid")

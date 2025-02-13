@@ -208,6 +208,30 @@ class AICOEnvironment(Environment):
         content={}
     )
 
+    # 设计文档相关消息协议
+    MSG_DESIGN_DOC_DONE: ClassVar[MessageSchema] = MessageSchema(
+        name="design:doc_done",
+        desc="设计文档完成通知",
+        content_schema={
+            "doc_type": (str, ...),          # 必填：文档类型(PRD/TECH_DESIGN)
+            "version": (str, ...),           # 必填：版本号
+            "file_path": (str, ...),         # 必填：文档路径
+            "review_status": (str, ...)       # 必填：评审状态
+        },
+        content={}
+    )
+
+    MSG_DESIGN_BASELINE: ClassVar[MessageSchema] = MessageSchema(
+        name="design:baseline",
+        desc="设计基线确认",
+        content_schema={
+            "version": (str, ...),           # 必填：版本号
+            "design_type": (str, ...),        # 必填：设计类型(PRD/TECH_DESIGN)
+            "review_summary": (dict, ...)     # 必填：评审摘要
+        },
+        content={}
+    )
+
     def __init__(self, project_root: Path) -> None:
         super().__init__()
         self.project_root = project_root

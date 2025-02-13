@@ -6,6 +6,7 @@
 @File    : project_manager.py
 """
 from pathlib import Path
+import pkg_resources
 
 from datetime import datetime
 from metagpt.roles import Role
@@ -19,6 +20,7 @@ from ..services.version_manager import AICOVersionManager
 from ..services.version_manager import get_current_version
 from metagpt.environment.aico.aico_env import AICOEnvironment
 from metagpt.ext.aico.services.doc_manager import AICODocManager,DocType
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -30,82 +32,48 @@ class AICOProjectManager(Role):
     goal: str = "根据AICO规范管理项目全生命周期"
     constraints: str = "严格遵循EA设计规范和项目管理规范"
     
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self.set_actions([ReviewAllRequirements, ReviewAllDesigns, ReviewAllTasks])  # 只保留需要LLM交互的Action
-        self.version_svc = AICOVersionManager(self.project_root)  # 注入项目根目录
+    # 明确定义Pydantic字段
+    project_root: Path = Field(..., description="项目根目录路径")
+    doc_manager: AICODocManager = Field(default=None, description="文档管理服务")
+    version_svc: AICOVersionManager = Field(default=None, description="版本管理服务")
+    tracking_svc: ProjectTrackingManager = Field(default=None, description="项目跟踪服务")
+
+    def __init__(
+        self,
+        project_root: Path,
+        embed_model=None,
+        llm=None,
+        **kwargs
+    ):
+        # 将 project_root 转换为绝对路径，并传递给父类进行初始化
+        project_root = project_root.absolute()
+        super().__init__(project_root=project_root, **kwargs)
+        
+        # 如有需要，可把 project_root 重新赋值（实际已由父类初始化）
+        self.project_root = project_root
+        
+        # 初始化文档管理服务（注意移除 repo= 前缀，使用位置参数传递 project_root）
+        self.doc_manager = AICODocManager.from_repo(
+            self.project_root,
+            specs=[],
+            embed_model=embed_model,
+            llm=llm
+        )
+        
+        # 初始化版本服务
+        self.version_svc = AICOVersionManager.from_path(self.project_root)
+        
+        # 初始化跟踪服务
+        self.tracking_svc = ProjectTrackingManager.from_path(
+            self.doc_manager.get_path(DocType.PROJECT_TRACKING)
+        )
+        
+        # 设置角色行为
+        self.set_actions([ReviewAllRequirements, ReviewAllDesigns, ReviewAllTasks])
+
         self.baseline_versions = [self.version_svc.current]
         self.current_baseline_version = self.version_svc.current
-        self.doc_manager = AICODocManager(self.project_root)
-        
-    def _init_project(self):
-        """使用AICODocManager管理目录结构"""
-        if self.project_root.exists():
-            logger.info(f"加载现有项目: {self.project_root}")
-            self._validate_project_structure()
-            self._sync_specs()
-            return
-
-        # 创建新项目结构（通过AICODocManager）
-        logger.info(f"初始化新项目结构: {self.project_root}")
-        
-        # 确保基础目录存在
-        self.doc_manager.ensure_dirs([
-            DocType.REQUIREMENT_RAW,
-            DocType.REQUIREMENT_ANALYZED,
-            DocType.BUSINESS_ARCH,
-            DocType.TECH_ARCH,
-            DocType.PRD,
-            DocType.SERVICE_DESIGN,
-            DocType.TEST_CASE
-        ])
-        
-        # 创建跟踪表（通过服务类）
-        self._create_tracking_file()
-        logger.info("项目结构初始化完成")
-
-    def _validate_project_structure(self):
-        """校验目录结构符合规范"""
-        # 使用DocType枚举定义需要校验的目录类型
-        required_doc_types = [
-            DocType.REQUIREMENT_RAW,
-            DocType.REQUIREMENT_ANALYZED,
-            DocType.BUSINESS_ARCH,
-            DocType.TECH_ARCH,
-            DocType.PRD,
-            DocType.SERVICE_DESIGN,
-            DocType.TEST_CASE,
-            DocType.PROJECT_TRACKING
-        ]
-        
-        missing_dirs = []
-        for doc_type in required_doc_types:
-            # 通过AICODocManager获取标准路径（不带版本号）
-            expected_path = self.doc_manager.get_doc_path(
-                doc_type=doc_type,
-                version="",  # 基础目录不需要版本号
-                create_dir=False
-            )
-            # 转换为相对于项目根目录的路径
-            relative_path = expected_path.relative_to(self.project_root)
-            
-            if not expected_path.exists():
-                missing_dirs.append(str(relative_path))
-
-        if missing_dirs:
-            logger.error(f"项目结构不完整，缺失目录: {missing_dirs}")
-            raise ValueError("Invalid project structure")
-
-
-
-    def _create_tracking_file(self):
-        """通过AICODocManager获取跟踪表路径"""
-        tracking_path = self.doc_manager.get_doc_path(
-            DocType.PROJECT_TRACKING,
-            version=""
-        )
-        self.tracking_svc = ProjectTrackingManager(tracking_path)
-        self.tracking_svc.save()
+        pass
 
     async def _act(self) -> None:
         """遵循README_AICO_CN_1.2.md的时序逻辑"""
@@ -130,37 +98,47 @@ class AICOProjectManager(Role):
         await self._confirm_requirement_baseline()
 
     async def _parse_raw_requirements(self):
-        """需求解析流程"""
-        await self._collect_raw_requirements()
-        
-        new_version = self.version_svc.bump("minor")
-        self.current_baseline_version = new_version
-        
-        # 发布业务需求分析
-        await self.publish_message(
-            AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS.with_content(
-                req_id=self._get_raw_requirements()["req_id"],
-                file_path=self._get_raw_requirements()["file_path"],
-                type="business",
-                version=new_version
-            )
-        )
-        
-        # 等待BA分析完成
-        analysis_done = await self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name)
-        if analysis_done:
-            self._handle_ba_result(analysis_done.content)
+        """需求解析流程（简化版本）"""
+        try:
+            await self._collect_raw_requirements()
             
-            # 更新跟踪表
-            self.tracking_svc.update_requirements_version(
-                req_ids=[analysis_done.content["req_id"]],
-                version=new_version
+            new_version = self.version_svc.bump("minor")
+            self.current_baseline_version = new_version
+            
+            # 发布业务需求分析
+            await self.publish_message(
+                AICOEnvironment.MSG_REQUIREMENT_BIZ_ANALYSIS.with_content(
+                    req_id=self._get_raw_requirements()["req_id"],
+                    file_path=self._get_raw_requirements()["file_path"],
+                    type="business",
+                    version=new_version
+                )
             )
             
-            # 更新需求状态
-            self.tracking_svc.update_raw_requirement_status(
-                req_id=analysis_done.content["req_id"],
-                status="parsed_by_ba"
+            # 等待BA分析完成
+            analysis_done = await self.observe(AICOEnvironment.MSG_BA_ANALYSIS_DONE.name)
+            if analysis_done:
+                self._handle_ba_result(analysis_done.content)
+                
+                # 更新跟踪表
+                self.tracking_svc.update_requirements_version(
+                    req_ids=[analysis_done.content["req_id"]],
+                    version=new_version
+                )
+                
+                # 更新需求状态
+                self.tracking_svc.update_raw_requirement_status(
+                    req_id=analysis_done.content["req_id"],
+                    status="parsed_by_ba"
+                )
+
+        except Exception as e:
+            logger.error(f"需求解析流程异常: {str(e)}")
+            await self.publish_message(
+                AICOEnvironment.MSG_PROCESS_FAILED.with_content(
+                    process="requirement_parsing",
+                    error=str(e)
+                )
             )
 
     async def _collect_raw_requirements(self):
@@ -280,20 +258,50 @@ class AICOProjectManager(Role):
         )
 
     async def _process_design(self):
-        """处理设计阶段"""
-        design_msg = await self.observe("design_doc")
-        if design_msg:
+        """处理设计阶段（根据文档6.2节拆分处理PRD和技术设计）"""
+        # 监听设计文档完成事件
+        async for design_msg in self.observe(AICOEnvironment.MSG_DESIGN_DOC_DONE.name):
             review_result = await self.rc.run(
                 ReviewAllDesigns().run(design_msg.content)
             )
             
-            # 发布设计基线（根据文档6.2节）
+            # 根据文档类型分发处理（根据反馈点1）
+            doc_type = design_msg.content.get("doc_type")
+            if doc_type == "PRD":
+                await self._handle_prd_design(review_result)
+            elif doc_type == "TECH_DESIGN":
+                await self._handle_tech_design(review_result)
+            else:
+                logger.warning(f"未知设计文档类型: {doc_type}")
+
+            # 更新设计版本（根据反馈点3保持当前模式）
+            new_version = self.version_svc.bump("minor")
+            self.tracking_svc.update_design_version(new_version)
+            
+            # 发布设计基线事件（根据文档6.2.3节）
             await self.publish_message(
-                AICOEnvironment.MSG_PRD.with_content(
-                    version=self.current_baseline_version,
-                    ai_review=review_result.instruct_content
+                AICOEnvironment.MSG_DESIGN_BASELINE.with_content(
+                    version=new_version,
+                    design_type=doc_type,
+                    review_summary=review_result.instruct_content
                 )
             )
+
+    async def _handle_prd_design(self, review_result):
+        """处理PRD设计结果"""
+        self.tracking_svc.update_design_status(
+            doc_type="PRD",
+            status="reviewed",
+            version=self.current_baseline_version
+        )
+
+    async def _handle_tech_design(self, review_result):
+        """处理技术设计结果"""
+        self.tracking_svc.update_design_status(
+            doc_type="TECH_DESIGN",
+            status="reviewed",
+            version=self.current_baseline_version
+        )
 
     async def _process_implementation(self):
         """处理实现跟踪（根据文档6.3节）"""
@@ -330,108 +338,13 @@ class AICOProjectManager(Role):
     def update_task_progress(self, task_id: str, progress: float):
         """更新任务进度"""
         self.tracking_svc.update_task_progress(task_id, progress)
-        self.tracking_svc.save()
+        # self.tracking_svc.save()
 
-    def _clean_old_versions(self):
-        """清理逻辑改为基于VERSION文件"""
-        current_version = get_current_version(self.project_root)
-        vs = AICOVersionManager.from_version(current_version)
-        
-        # 根据当前版本计算保留范围
-        retention_policy = {
-            "major": vs.major - 2 if vs.major > 2 else 0,
-            "minor": 3,
-            "patch": 2
-        }
-        self.tracking_svc.clean_old_versions(retention_policy)
 
     def _generate_new_version(self, change_type: str) -> str:
         """完全通过VersionService生成"""
         return self.version_svc.bump(change_type)
 
-    # def generate_version_report(self, version: str) -> str:
-    #     """生成版本变更报告"""
-    #     history = self.tracking_svc.get_version_history()
-    #     target = next((h for h in history if h["version"] == version), None)
-        
-    #     if not target:
-    #         return f"版本 {version} 未找到"
-        
-    #     report = f"# 版本变更报告 ({version})\n\n"
-    #     report += f"**生成时间**: {target['time']}\n"
-    #     report += f"**关联文档**: [{target['doc_path']}]({target['doc_path']})\n\n"
-        
-    #     report += "## 主要变更\n"
-    #     for change in target["changes"]:
-    #         report += f"- {change}\n"
-        
-    #     report += "\n## 关联需求\n"
-    #     for req_id in target["related_reqs"]:
-    #         req_info = self.tracking_svc.get_requirement_info(req_id)
-    #         report += f"- {req_id}: {req_info.get('description', '')}\n"
-            
-    #         req_status = self.tracking_svc.get_requirement_status(req_id)
-    #         if req_status != "评审通过":
-    #             logger.warning(f"需求 {req_id} 状态异常")
-        
-    #     return report
-
-    def _determine_version_change(self) -> str:
-        """根据文档6.1.3判断版本变更类型"""
-        changes = self.tracking_svc.get_pending_changes()
-        
-        if any(c["change_type"] == "架构变更" for c in changes):
-            return "major"
-        elif any(c["change_type"] == "新增功能" for c in changes):
-            return "minor"
-        return "patch"
-
-    def _create_version_dirs(self, version: str):
-        """使用AICODocManager创建版本目录"""
-        doc_types = [
-            DocType.REQUIREMENT_ANALYZED,
-            DocType.BUSINESS_ARCH,
-            DocType.TECH_ARCH,
-            DocType.PRD,
-            DocType.SERVICE_DESIGN,
-            DocType.TEST_CASE
-        ]
-        
-        for doc_type in doc_types:
-            self.doc_manager.get_doc_path(
-                doc_type=doc_type,
-                version=version,
-                create_dir=True
-            )
-
-    def _init_version_documents(self, version: str):
-        """在首个正式版本创建需求文档"""
-        req_dir = self.project_root / f"docs/requirements/analyzed/{version}/req-001"
-        req_dir.mkdir()
-        
-        # 需求文档模板
-        (req_dir / "biz_analysis.md").write_text("# 业务需求分析模板")
-        
-        # 同步创建其他文档模板...
-
-    def _all_requirements_analyzed(self) -> bool:
-        """检查所有需求是否完成分析"""
-        reqs = self.tracking_svc.get_all_requirements()
-        return all(
-            req["ba_status"] == "完成" and req["ea_status"] == "完成"
-            for req in reqs
-        )
-
-    def _get_baseline_reqs(self) -> list:
-        """获取基线需求列表"""
-        return [
-            {
-                "id": req["req_id"],
-                "type": req["type"],
-                "description": req["description"][:100]  # 截断长描述
-            }
-            for req in self.tracking_svc.get_approved_requirements()
-        ]
 
     def _handle_ba_result(self, result: dict):
         """处理BA分析结果"""
@@ -478,5 +391,51 @@ class AICOProjectManager(Role):
             }
         )
 
+    def _load_existing_specs(self):
+        """加载已有项目的规范文件"""
+        specs_dir = self.project_root / "docs/specs"
+        return list(specs_dir.glob("*.md")) if specs_dir.exists() else []
 
+    async def _wait_for_arch_analysis_complete(self):
+        """等待架构分析完成（文档6.1.2节步骤2）"""
+        # 同时等待业务架构和技术架构完成
+        biz_arch_done = await self.observe(AICOEnvironment.MSG_BIZ_ARCH_DONE.name, timeout=600)
+        tech_arch_done = await self.observe(AICOEnvironment.MSG_TECH_ARCH_DONE.name, timeout=600)
+        
+        if not biz_arch_done or not tech_arch_done:
+            logger.error("架构分析超时或未完成")
+            return False
+        
+        # 处理业务架构结果
+        self._handle_ba_result(biz_arch_done.content)
+        
+        # 处理技术架构结果
+        self._handle_ea_result(tech_arch_done.content)
+        
+        # 更新跟踪表状态
+        self.tracking_svc.update_requirement_status(
+            req_ids=[biz_arch_done.content["req_id"], tech_arch_done.content["req_id"]],
+            status="arch_analyzed"
+        )
+        return True
+
+    def _get_raw_requirements(self) -> dict:
+        """获取原始需求数据（文档5.2节）"""
+        # 从跟踪服务获取所有状态为new的需求
+        return self.tracking_svc.get_requirements_by_status("new")
+
+    def _get_parsed_biz_reqs(self) -> list:
+        """获取已解析的业务需求（文档6.1.1节）"""
+        return self.tracking_svc.get_requirements_by_type("business", "parsed_by_ba")
+
+    def _get_parsed_tech_reqs(self) -> list:
+        """获取已解析的技术需求（文档6.1.1节）"""
+        return self.tracking_svc.get_requirements_by_type("technical", "parsed_by_ea")
+
+    def _get_all_parsed_requirements(self) -> dict:
+        """获取所有已解析需求（文档6.1.3节）"""
+        return {
+            "business": self._get_parsed_biz_reqs(),
+            "technical": self._get_parsed_tech_reqs()
+        }
 

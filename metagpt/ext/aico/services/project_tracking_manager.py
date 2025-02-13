@@ -389,16 +389,22 @@ class ProjectTrackingManager:
         required_fields = ["file_path", "description", "source"]
         return all(field in req_data for field in required_fields)
 
-    def update_design_status(self, req_id: str, doc_path: str, version: str):
-        """更新设计状态（添加版本参数）"""
+    def update_design_status(self, req_id: str, doc_type: str, doc_path: str, version: str):
+        """更新设计状态（根据反馈调整参数）"""
         ws = self.wb[SheetType.REQUIREMENT_MGMT.value.name]
         cols = SheetType.REQUIREMENT_MGMT.value.columns
         
+        # 根据文档类型更新不同字段
         for row in ws.iter_rows(min_row=2):
             if row[cols.REQ_ID.value-1].value == req_id:
-                row[cols.DESIGN_STATUS.value-1].value = "基线化"
-                row[cols.DESIGN_DOC.value-1].value = doc_path
-                row[cols.CODE_BASELINE.value-1].value = version  # 添加版本记录
+                if doc_type == "PRD":
+                    row[cols.PRD_STATUS.value-1].value = "基线化"
+                    row[cols.PRD_DOC.value-1].value = doc_path
+                elif doc_type == "TECH_DESIGN":
+                    row[cols.TECH_DESIGN_STATUS.value-1].value = "基线化"
+                    row[cols.TECH_DOC.value-1].value = doc_path
+                
+                row[cols.DESIGN_VERSION.value-1].value = version
                 self.wb.save(self.file_path)
                 return True
         return False

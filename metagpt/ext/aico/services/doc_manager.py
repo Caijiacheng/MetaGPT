@@ -57,14 +57,14 @@ class AICORepo(Repo):
     - 确保物理目录结构完整性
     """
     
-    _PATH_SPECS = "docs/specs"
-    _PATH_REQUIREMENTS = "docs/requirements"
-    _PATH_REQ_RAW = "docs/requirements/raw"
-    _PATH_REQ_ANALYZED = "docs/requirements/analyzed"
-    _PATH_EA_ARCH = "docs/ea"
-    _PATH_DESIGN_PRD = "docs/design/prd"
-    _PATH_DESIGN_SERVICES = "docs/design/services"
-    _PATH_RELEASES = "releases"
+    _PATH_SPECS: ClassVar[str]  = "docs/specs"
+    _PATH_REQUIREMENTS: ClassVar[str] = "docs/requirements"
+    _PATH_REQ_RAW: ClassVar[str] = "docs/requirements/raw"
+    _PATH_REQ_ANALYZED: ClassVar[str] = "docs/requirements/analyzed"
+    _PATH_EA_ARCH: ClassVar[str] = "docs/ea"
+    _PATH_DESIGN_PRD: ClassVar[str] = "docs/design/prd"
+    _PATH_DESIGN_SERVICES: ClassVar[str] = "docs/design/services"
+    _PATH_RELEASES: ClassVar[str] = "releases"
 
     _PATH_SPECS_FILES = [
         _PATH_SPECS + "/pm_guide.md",
@@ -102,6 +102,18 @@ class AICORepo(Repo):
     
     _INVAID_VERSION_: ClassVar[str] = "0.0.0"
 
+    # 添加缺失的目录定义
+    _PATH_DIRS: ClassVar[List[str]] = [
+        _PATH_SPECS,
+        _PATH_REQUIREMENTS,
+        _PATH_REQ_RAW,
+        _PATH_REQ_ANALYZED,
+        _PATH_EA_ARCH,
+        _PATH_DESIGN_PRD,
+        _PATH_DESIGN_SERVICES,
+        _PATH_RELEASES,
+    ]
+
     def __init__(self, path: Path):
         super().__init__(path=path)
         self._current_version = self._read_version()
@@ -115,19 +127,18 @@ class AICORepo(Repo):
             raise FileExistsError(f"项目路径已存在: {path}")
         
         # 初始化所有目录文件
-        for path in cls._PATH_DIRS:
-            (path).mkdir(parents=True, exist_ok=True)
-            pass
+        for rel_dir in cls._PATH_DIRS:
+            (path / rel_dir).mkdir(parents=True, exist_ok=True)
 
-        # copy所有规范文件
+        # 复制规范文件到 specs 目录中
         for spec in specs:
-            shutil.copy(spec, cls._PATH_SPECS +"/" + spec.name)
+            shutil.copy(spec, path / cls._PATH_SPECS / spec.name)
             cls.ensure_specs_exist()
-            pass
             
         # 更新版本文件
         version_file = path / "VERSION"
         version_file.write_text(version, encoding="utf-8")
+
 
         return cls(path, **kwargs)
 
@@ -400,17 +411,21 @@ class AICODocManager:
     """
     
     def __init__(self, repo: Union[Path, AICORepo], specs: List[Path] = None, embed_model=None, llm=None):
-        # 修改后的初始化逻辑
+        # 如果传入的是路径，则判断该路径是否存在
         if isinstance(repo, Path):
-            self.repo = AICORepo(repo) if repo.exists() else None
+            if repo.exists():
+                self.repo = AICORepo(repo)
+            else:
+                # 如果项目仓库不存在，则调用初始化函数创建
+                self.repo = AICORepo.init_project(repo, specs or [])
         else:
             self.repo = repo
         
         # 允许specs为空（已有项目）
         self.specs = specs or []
         
-        # 初始化搜索引擎
-        self.search_engine = self._init_search_engine(embed_model, llm)  # 新增初始化
+        # 初始化搜索引擎，确保后续调用self.repo.get_text_documents()不会出错
+        self.search_engine = self._init_search_engine(embed_model, llm)
     
     def _init_search_engine(self, embed_model = None, llm = None) -> SimpleEngine:
         """初始化文档检索引擎"""
@@ -436,9 +451,9 @@ class AICODocManager:
                 shutil.copy(spec, self.repo.specs_dir)
     
     @classmethod
-    def from_repo(cls, repo_path: Path, specs: List[Path] = None):
+    def from_repo(cls, repo_path: Path, specs: List[Path] = None, embed_model=None, llm=None):
         """加载已有仓库时允许specs为空"""
-        return cls(repo=repo_path, specs=specs)
+        return cls(repo=repo_path, specs=specs, embed_model=embed_model, llm=llm)
     
     async def create_document(self, doc_type: DocType, **context):
         # 添加文档类型校验
@@ -474,6 +489,8 @@ class AICODocManager:
         
         return doc
     
+    def get_path(self, doc_type: DocType, **context) -> Path:
+        return self.repo.path / self.repo.get_doc_path(doc_type, **context)
     
     def get_document(self, doc_type: DocType, context: dict = None) -> Optional[AICODocument]:
         """同步获取指定文档"""
